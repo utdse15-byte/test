@@ -1,0 +1,1427 @@
+{
+  "schema_id": "manju.model-catalog/v1",
+  "revision": "2026-09-06.rebuilt-r4.1",
+  "profiles": [
+    {
+      "id": "minimax-h3",
+      "label": "MiniMax H3",
+      "vendor": "MiniMax",
+      "model_id": "MiniMax-H3",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "minimax-h3-20260906",
+      "source_url": "https://platform.minimax.io/docs/api-reference/video-generation-v2-create",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            4,
+            15
+          ],
+          "resolutions": [
+            "768P",
+            "2K"
+          ],
+          "aspect_ratios": [
+            "21:9",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            4,
+            15
+          ],
+          "resolutions": [
+            "768P",
+            "2K"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "图生视频画幅跟随图片；供应商忽略显式画幅参数。"
+          ]
+        },
+        {
+          "id": "last",
+          "task": "animate",
+          "roles": {
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            4,
+            15
+          ],
+          "resolutions": [
+            "768P",
+            "2K"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            4,
+            15
+          ],
+          "resolutions": [
+            "768P",
+            "2K"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "references",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              0,
+              9
+            ],
+            "reference_video": [
+              0,
+              3
+            ],
+            "reference_audio": [
+              0,
+              3
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            4,
+            15
+          ],
+          "resolutions": [
+            "768P",
+            "2K"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "21:9",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "reference_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_duration_min_ms": {
+            "reference_video": 2000,
+            "reference_audio": 2000
+          },
+          "input_total_duration_max_ms": {
+            "reference_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000,
+            "reference_video": 50000000,
+            "reference_audio": 15000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "reference_video": [
+              ".mp4",
+              ".mov"
+            ],
+            "reference_audio": [
+              ".wav",
+              ".mp3"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        }
+      ],
+      "notes": [
+        "首尾帧模式与参考生成模式互斥。",
+        "媒体尺寸、编码、帧率以及整个请求体上限仍需供应商提交前检查。"
+      ]
+    },
+    {
+      "id": "minimax-h3-max",
+      "label": "MiniMax H3-Max",
+      "vendor": "MiniMax",
+      "model_id": "MiniMax-H3-Max",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "minimax-h3-max-20260906",
+      "source_url": "https://platform.minimax.io/docs/api-reference/video-generation-v2-create",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            5,
+            15
+          ],
+          "resolutions": [
+            "480P",
+            "768P"
+          ],
+          "aspect_ratios": [
+            "21:9",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            5,
+            15
+          ],
+          "resolutions": [
+            "480P",
+            "768P"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "图生视频画幅跟随图片；供应商忽略显式画幅参数。"
+          ]
+        },
+        {
+          "id": "last",
+          "task": "animate",
+          "roles": {
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            5,
+            15
+          ],
+          "resolutions": [
+            "480P",
+            "768P"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            5,
+            15
+          ],
+          "resolutions": [
+            "480P",
+            "768P"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 30000000,
+            "last_frame": 30000000,
+            "subject_reference": 30000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp",
+              ".heic",
+              ".heif"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        }
+      ],
+      "notes": [
+        "首尾帧模式与参考生成模式互斥。",
+        "媒体尺寸、编码、帧率以及整个请求体上限仍需供应商提交前检查。",
+        "H3-Max 不支持参考图、参考视频、参考音频生成，也不支持 2K。"
+      ]
+    },
+    {
+      "id": "gemini-omni-1.1-flash",
+      "label": "Gemini Omni 1.1 Flash",
+      "vendor": "Google",
+      "model_id": "gemini-omni-1.1-flash",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "gemini-omni-1.1-flash-20260906",
+      "source_url": "https://ai.google.dev/gemini-api/docs/omni",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "360p",
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "360p",
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "360p",
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "subject",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              1,
+              2
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "360p",
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "这里只声明已核验的双主体图片用法，不将 2 张当作供应商全局上限。"
+          ]
+        },
+        {
+          "id": "uploaded-edit",
+          "task": "edit",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "360p",
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "source_video": 10000
+          },
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "uploaded-extend",
+          "task": "extend",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "360p",
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "source_video": 10000
+          },
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        }
+      ],
+      "notes": [
+        "1080p / 4k 是上采样输出，不等于原生像素生成。",
+        "上传音频参考与改声音不受当前接口支持。",
+        "上传视频编辑/延展的地区限制需核验；英国、瑞士、EEA 当前不提供该上传路径。",
+        "延展只向末尾追加；上传含讲话的视频不能借此增加对白。",
+        "本适配为有限的已核验模式集合，不代表模型的完整上限。"
+      ]
+    },
+    {
+      "id": "veo-3.1-generate-preview",
+      "label": "Veo 3.1 Preview",
+      "vendor": "Google",
+      "model_id": "veo-3.1-generate-preview",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "veo-3.1-generate-preview-20260906",
+      "source_url": "https://ai.google.dev/gemini-api/docs/veo",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": [
+            4,
+            6,
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            4,
+            6,
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            4,
+            6,
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "references",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              1,
+              3
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "veo-extend",
+          "task": "extend",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": "veo-3.1",
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "只允许声明为先前 Veo 生成的视频，不能直接承诺任意上传视频延展。",
+            "来源声明为人工记录，不能仅凭文件哈希证明供应商来源。"
+          ]
+        }
+      ],
+      "notes": [
+        "参考输入、1080p 或 4k 要求 8 秒；延展只允许 720p。"
+      ]
+    },
+    {
+      "id": "veo-3.1-fast-generate-preview",
+      "label": "Veo 3.1 Fast Preview",
+      "vendor": "Google",
+      "model_id": "veo-3.1-fast-generate-preview",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "veo-3.1-fast-generate-preview-20260906",
+      "source_url": "https://ai.google.dev/gemini-api/docs/veo",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": [
+            4,
+            6,
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            4,
+            6,
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            4,
+            6,
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "references",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              1,
+              3
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p",
+            "1080p",
+            "4k"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": 8,
+          "high_resolutions": [
+            "1080p",
+            "4k"
+          ],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "veo-extend",
+          "task": "extend",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": [
+            8
+          ],
+          "duration_range": null,
+          "resolutions": [
+            "720p"
+          ],
+          "aspect_ratios": [
+            "16:9",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": "veo-3.1",
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "只允许声明为先前 Veo 生成的视频，不能直接承诺任意上传视频延展。",
+            "来源声明为人工记录，不能仅凭文件哈希证明供应商来源。"
+          ]
+        }
+      ],
+      "notes": [
+        "参考输入、1080p 或 4k 要求 8 秒；延展只允许 720p。"
+      ]
+    },
+    {
+      "id": "runway-keyframes-app",
+      "label": "Runway · Animate with Keyframes",
+      "vendor": "Runway",
+      "model_id": null,
+      "entry": "web_app_only",
+      "status": "authoring_only",
+      "claim_id": "runway-keyframes-app-20260906",
+      "source_url": "https://help.runwayml.com/hc/en-us/articles/45570040112531-Creating-with-Apps",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "keyframes",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": null,
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        }
+      ],
+      "notes": [
+        "Runway Apps 官方说明不提供 API。",
+        "具体时长、质量档、模型版本和额度在网页确认。"
+      ]
+    },
+    {
+      "id": "runway-edit-studio",
+      "label": "Runway · Edit Studio",
+      "vendor": "Runway",
+      "model_id": null,
+      "entry": "web_app_only",
+      "status": "authoring_only",
+      "claim_id": "runway-edit-studio-20260906",
+      "source_url": "https://help.runwayml.com/hc/en-us/articles/45570040112531-Creating-with-Apps",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "edit",
+          "task": "edit",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": null,
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        }
+      ],
+      "notes": [
+        "这是 Runway Apps 中的编辑工作流，不把产品入口命名成可调用的模型 ID。"
+      ]
+    },
+    {
+      "id": "luma-ray3-modify",
+      "label": "Luma · Ray3 Modify",
+      "vendor": "Luma",
+      "model_id": null,
+      "entry": "product_workflow",
+      "status": "authoring_only",
+      "claim_id": "luma-ray3-modify-20260906",
+      "source_url": "https://lumalabs.ai/learning-hub/ray3-modify-user-guide",
+      "checked_on": "2026-09-06",
+      "review_after": "2026-10-06",
+      "modes": [
+        {
+          "id": "modify",
+          "task": "edit",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ],
+            "first_frame": [
+              0,
+              1
+            ],
+            "last_frame": [
+              0,
+              1
+            ],
+            "subject_reference": [
+              0,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": null,
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "source_video": 10000
+          },
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": 5000,
+          "notes": []
+        }
+      ],
+      "notes": [
+        "本档针对 Ray3 Modify 指南，不替代 Ray3.2 或旧 Ray2 API 的参数契约。",
+        "高修改强度可能降低原镜头和运动保真度；不能承诺保留项一定被执行。",
+        "旧指南中的尾帧卡实际取第5秒画面。本档拒绝对超过5秒的输入把该卡当作整段最后一帧。"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "schema_id": "manju.model-approval/v1",
+  "request_sha256": "2ff03c70513c83cf9bb03940c02cd4a3c86d6d4d9662776a15a0493a76dddd59",
+  "catalog_sha256": "30da72562adac1ed81ccf10e729c70879dd37a06c7214a09c1b9e6d877ef7870",
+  "profile_id": "minimax-h3",
+  "mode_id": "first-last",
+  "reviewer": "合成数据测试，不是用户审批",
+  "declared_at": "2026-09-07T04:16:18.392190Z",
+  "acknowledged_warnings": [
+    "authoring_only:no_API_call_no_quality_or_price_guarantee",
+    "媒体尺寸、编码、帧率以及整个请求体上限仍需供应商提交前检查。",
+    "首尾帧模式与参考生成模式互斥。"
+  ],
+  "human_declared": true,
+  "external_execution_authorized": false
+}

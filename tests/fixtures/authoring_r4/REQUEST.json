@@ -1,0 +1,38 @@
+{
+  "schema_id": "manju.model-request/v1",
+  "shot_id": "首尾桥接演练",
+  "task": "bridge",
+  "prompt": "在同一个连续镜头中，从首帧自然过渡到尾帧。",
+  "duration_s": 8,
+  "resolution": "768P",
+  "aspect_ratio": "adaptive",
+  "assets": [
+    {
+      "id": "A1",
+      "role": "first_frame",
+      "path": "首帧.png",
+      "sha256": "1ac67c3a1c909b3356cf6ff490c0f88b8a30ef4c28ca579657f6007146abe71c",
+      "bytes": 691,
+      "duration_ms": null,
+      "origin_model": null
+    },
+    {
+      "id": "A2",
+      "role": "last_frame",
+      "path": "尾帧.png",
+      "sha256": "a99284a70ff9a9ab8aec0eed52c3b9bf7a243628820814d0e6bca45445ce2e3f",
+      "bytes": 691,
+      "duration_ms": null,
+      "origin_model": null
+    }
+  ],
+  "preserve": [
+    "构图",
+    "主体身份"
+  ],
+  "change": [
+    "光线"
+  ],
+  "stage": "draft",
+  "approved_draft_sha256": null
+}

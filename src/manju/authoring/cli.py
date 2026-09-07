@@ -100,3 +100,24 @@ def diff_command(before: Path, after: Path):
     _emit({'before_sha256': digest(a), 'after_sha256': digest(b),
            'added': sorted(new.keys() - old.keys()), 'removed': sorted(old.keys() - new.keys()),
            'changed': sorted(k for k in old.keys() & new.keys() if old[k] != new[k])})
+
+
+@app.command('from-shot')
+@_guard
+def from_shot_command(project: Path, shot_id: str,
+                      output: Path = typer.Option(..., '--output')):
+    """只读导出镜头和参考计划，供离线工作台导入；不改原工程。"""
+    from .project_bridge import from_shot
+    _emit(from_shot(project, shot_id), output)
+
+
+@app.command('workbench')
+@_guard
+def workbench_command(output: Path = typer.Option(..., '--output')):
+    """导出单文件离线工作台；双击可用，不需要运行本地服务器。"""
+    from importlib.resources import files
+    data = files('manju.authoring').joinpath('data/workbench.html').read_bytes()
+    with output.open('xb') as stream:
+        stream.write(data)
+    _emit({'workbench': str(output), 'network_required': False,
+           'note': '离线规划与文件交接，不生成商业模型视频。'})

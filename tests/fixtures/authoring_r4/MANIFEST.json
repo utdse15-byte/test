@@ -1,0 +1,11 @@
+{
+  "schema_id": "manju.model-bundle/v1",
+  "files": {
+    "APPROVAL.json": "24a810274da886cc9488322d7bfc6e5e49a264e97f333b871e75edab3ee8bfb6",
+    "BRIEF.md": "ce650472638be0c5ec709eade79a83117eba18862daded462548931c2fcaf1c8",
+    "CATALOG.json": "05734646eb161ce2c7216a462da165e14278eba38416e4bc25c8e2eb02adc988",
+    "REQUEST.json": "3bc0bf1692a4ab16dd3f1148d2202a5bda407edaf8dc0db0a0f3b5f70014dd70",
+    "assets/尾帧.png": "a99284a70ff9a9ab8aec0eed52c3b9bf7a243628820814d0e6bca45445ce2e3f",
+    "assets/首帧.png": "1ac67c3a1c909b3356cf6ff490c0f88b8a30ef4c28ca579657f6007146abe71c"
+  }
+}

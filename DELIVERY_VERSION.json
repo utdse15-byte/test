@@ -1,10 +1,11 @@
 {
-  "stage": "R4",
-  "version": "0.2.0+r4.rebuilt",
+  "stage": "R5",
+  "version": "0.2.0+r5",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
-    "R3"
+    "R3",
+    "R4"
   ],
   "features": {
     "R3": [
@@ -18,6 +19,12 @@
       "任务规划与约束校验",
       "人工批准绑定请求哈希",
       "不可变外部模型交接包"
+    ],
+    "R5": [
+      "离线浏览器工作台",
+      "本地文件哈希与任务文件导出",
+      "项目镜头导入",
+      "能力目录过期与互斥提示"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
