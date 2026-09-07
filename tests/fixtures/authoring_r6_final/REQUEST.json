@@ -1,0 +1,14 @@
+{
+  "schema_id": "manju.model-request/v1",
+  "shot_id": "试镜：保持连续运动",
+  "task": "create",
+  "prompt": "合成流程演练：比较运动连续性，固定镜头，不改变主体。",
+  "duration_s": 8,
+  "resolution": "1080p",
+  "aspect_ratio": "16:9",
+  "assets": [],
+  "preserve": [],
+  "change": [],
+  "stage": "final",
+  "approved_draft_sha256": "5b425976fa7b4ba42e03ec4ef9ff737111f445cf913cee7f0ffcc0ea2fac1cfc"
+}

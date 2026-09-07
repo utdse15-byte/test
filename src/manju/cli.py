@@ -4948,6 +4948,8 @@ app.add_typer(handoff_app, name="handoff", rich_help_panel=PANEL_GENERATE)
 # Offline authoring is separate from execution-provider routing.
 from .authoring.cli import app as model_authoring_app
 app.add_typer(model_authoring_app, name="models", rich_help_panel=PANEL_GENERATE)
+from .review.cli import app as candidate_review_app
+app.add_typer(candidate_review_app, name="review", rich_help_panel=PANEL_GENERATE)
 
 
 @handoff_app.command("profiles")

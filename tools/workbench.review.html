@@ -1,0 +1,20 @@
+<section id="review-section" class="panel">
+<h2><span class="num">05</span> 看过实际候选，再批准草稿</h2>
+<p class="hint">先在上方填写草稿任务，再添加本地视频。候选用 A / B 标签隐藏文件名，不按型号或分数自动推荐；这不是科学双盲实验。视频只在浏览器中读取，不上传。</p>
+<div class="toolbar"><label class="filebtn" for="review-files">添加 / 重新绑定候选<input class="hidden" id="review-files" type="file" multiple accept="video/*,.mp4,.mov,.webm,.mkv"></label><label class="filebtn" for="import-review">导入审片记录<input class="hidden" id="import-review" type="file" accept=".json,application/json"></label><button id="create-review" class="primary">按当前草稿建立审片场次</button><button id="reveal-review">揭示文件名</button></div>
+<p id="review-status" role="status" class="hint">尚未创建审片场次。建立后，任务与候选名单固定；新的比较应使用新场次。</p>
+<div id="candidate-grid" class="candidate-grid"><div class="empty">请先添加实际视频。最多 8 个不同内容的候选。</div></div>
+<div class="actions"><button id="play-review">从头一起播放</button><button id="pause-review">全部暂停</button><button id="load-review-request">载入此场次的草稿任务</button></div>
+<p class="hint">一起播放不保证逐帧同步。默认静音；手动打开一个候选的声音时会静音其他候选。不能播放的编码请在本地播放器中检查，不应仅凭缩略图批准。</p>
+<div class="formrow">
+<div><h3>追加一条人工决定</h3><label class="field" for="review-candidate">评审哪一个候选？<select id="review-candidate"><option value="">请明确选择</option></select></label><label class="field" for="review-verdict">决定<select id="review-verdict"><option value="">请明确选择</option><option value="approve_draft">批准为定稿前的草稿</option><option value="revise">需要修改</option><option value="reject">拒绝此候选</option></select></label><label class="field" for="review-notes">看到了什么？为什么？<textarea id="review-notes" maxlength="6000" placeholder="写下具体观察，例如：人物一致，但末尾手指变形。"></textarea></label></div>
+<div><h3>确认与证据</h3><label class="field" for="review-human">审片人<input id="review-human" maxlength="120" autocomplete="off"></label><label class="field" for="review-score">提示词符合度（可不评分）<select id="review-score"><option value="">不评分</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label><label class="checkline"><input id="review-confirmed" type="checkbox"><span>我已查看这个实际视频，确认以上决定。此声明不自动选片、不批准影片锁定。</span></label><button id="record-review" class="primary">核对文件并追加决定</button><p class="hint">旧决定不会被新决定抹去。若最新决定变为修改或拒绝，该记录中的候选不能再晋升。历史文件是当时的快照，并非联网撤销服务。</p></div>
+</div>
+<div class="actions"><button id="export-review">保存完整审片 JSON</button><button id="export-review-report">保存人读报告</button></div>
+<details><summary>本场次记录（媒体字节仍在原文件中）</summary><pre id="review-history">还没有审片记录。</pre></details>
+<div class="warningbox" style="margin-top:20px"><strong>晋升不等于重新编写创作意图。</strong> 只允许切换到定稿阶段及调整分辨率。提示词、时长、画幅或输入素材改变后，必须重新审查新草稿。</div>
+<div class="formrow" style="margin-top:14px"><label class="field" for="promotion-resolution">定稿分辨率（留空保持草稿设置）<input id="promotion-resolution" maxlength="20" placeholder="例如：1080p"></label><div><label class="checkline"><input id="promotion-confirmed" type="checkbox"><span>我明确将当前选中的、已批准的实际草稿晋升为定稿任务。</span></label><button id="promote-review" class="primary">核对草稿并建立定稿任务</button></div></div>
+<p class="hint">晋升后，请回到步骤 03 重新选择适配模式，并在步骤 04 导出。新的定稿 ZIP 包含实际批准视频、完整审片记录和可复核哈希。仅有一个声称的草稿哈希不能导出定稿包。</p>
+</section>
+<style>.candidate-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:16px 0}.candidate-card{border:1px solid var(--line);border-radius:10px;padding:14px;min-width:0;overflow-wrap:anywhere}.candidate-card video{width:100%;aspect-ratio:16/9;background:#142326;border-radius:8px}.candidate-card h3{margin:0 0 8px}.candidate-card code{font-size:10px}.candidate-card .hint{margin:5px 0}.candidate-grid .empty{grid-column:1/-1}@media(max-width:700px){.candidate-grid{grid-template-columns:1fr}}
+</style>

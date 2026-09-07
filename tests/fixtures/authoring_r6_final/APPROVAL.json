@@ -1,0 +1,15 @@
+{
+  "schema_id": "manju.model-approval/v1",
+  "request_sha256": "f8c2c00c5d6dee049767c487c1a6cdeb5188fd1068aeabaa40ee7faa698f837b",
+  "catalog_sha256": "30da72562adac1ed81ccf10e729c70879dd37a06c7214a09c1b9e6d877ef7870",
+  "profile_id": "veo-3.1-generate-preview",
+  "mode_id": "text",
+  "reviewer": "离线合成验收",
+  "declared_at": "2026-09-07T04:46:09.065Z",
+  "acknowledged_warnings": [
+    "authoring_only:no_API_call_no_quality_or_price_guarantee",
+    "参考输入、1080p 或 4k 要求 8 秒；延展只允许 720p。"
+  ],
+  "human_declared": true,
+  "external_execution_authorized": false
+}

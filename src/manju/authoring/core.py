@@ -73,9 +73,11 @@ def write_new_json(path: Path, value: Any) -> None:
     """Exclusive output; a new name is required for a revision."""
     if isinstance(value, BaseModel):
         value = value.model_dump(mode='json')
-    with path.open('x', encoding='utf-8') as stream:
-        json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
-        stream.write('\n')
+    encoded = (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode('utf-8')
+    if len(encoded) > MAX_JSON:
+        raise AuthoringError('JSON exceeds the 2 MiB local safety limit; start a new revision/session')
+    with path.open('xb') as stream:
+        stream.write(encoded)
 
 
 def safe_relative(name: str) -> str:
@@ -410,13 +412,23 @@ def _members(root: Path) -> dict[str, str]:
 
 
 def write_bundle(request: Request, catalog: Catalog, approval: Approval,
-                 asset_root: Path, output: Path) -> Path:
+                 asset_root: Path, output: Path, *, draft_review=None, draft_file: Path | None = None) -> Path:
     """Publish a new immutable directory. Sources are copied and rehashed.
 
     The old provider-handoff format and its verifier are not changed. This is
     an independent companion, never an in-place mutation of an old bundle.
     """
     verify_approval(request, catalog, approval)
+    candidate = None
+    if request.stage == 'final':
+        from ..review.core import ReviewDocument, validate_promotion
+        if draft_review is None or draft_file is None:
+            raise AuthoringError('final handoff requires a reviewed draft document and its actual video')
+        draft_review = ReviewDocument.model_validate(
+            draft_review.model_dump(mode='json') if hasattr(draft_review, 'model_dump') else draft_review)
+        candidate = validate_promotion(request, draft_review, draft_file)
+    elif draft_review is not None or draft_file is not None:
+        raise AuthoringError('draft evidence is only valid for final promotion')
     if output.exists():
         raise AuthoringError('output already exists; choose a new revision directory')
     if not output.parent.is_dir():
@@ -440,8 +452,16 @@ def write_bundle(request: Request, catalog: Catalog, approval: Approval,
         write_new_json(staging / 'CATALOG.json', catalog)
         write_new_json(staging / 'APPROVAL.json', approval)
         (staging / 'BRIEF.md').write_text(brief(request, profile, mode), encoding='utf-8')
-        write_new_json(staging / 'MANIFEST.json', {'schema_id': 'manju.model-bundle/v1',
-                                                  'files': _members(staging)})
+        if candidate is not None:
+            from ..review.core import draft_member, validate_promotion
+            write_new_json(staging / 'DRAFT_REVIEW.json', draft_review)
+            target = staging / draft_member(candidate)
+            target.parent.mkdir()
+            shutil.copyfile(draft_file, target)
+            validate_promotion(request, draft_review, target)
+        write_new_json(staging / 'MANIFEST.json', {
+            'schema_id': 'manju.model-bundle/v2' if candidate is not None else 'manju.model-bundle/v1',
+            'files': _members(staging)})
         verify_bundle(staging)
         # mkdir reserves a revision name even on POSIX, whose rename could
         # otherwise replace an existing empty directory. Roll back only our own reservation.
@@ -456,9 +476,9 @@ def write_bundle(request: Request, catalog: Catalog, approval: Approval,
     return output
 
 
-def verify_bundle(root: Path) -> dict:
+def verify_bundle(root: Path, *, require_promotion: bool = False) -> dict:
     manifest = load_json(member(root, 'MANIFEST.json'))
-    if set(manifest) != {'schema_id', 'files'} or manifest['schema_id'] != 'manju.model-bundle/v1':
+    if set(manifest) != {'schema_id', 'files'} or manifest['schema_id'] not in {'manju.model-bundle/v1', 'manju.model-bundle/v2'}:
         raise AuthoringError('unknown manifest schema')
     if manifest['files'] != _members(root):
         raise AuthoringError('bundle files changed, missing or unexpected')
@@ -477,9 +497,27 @@ def verify_bundle(root: Path) -> dict:
         if path.stat().st_size != a.bytes or file_digest(path) != a.sha256:
             raise AuthoringError(f'asset integrity failure: {a.id}')
         expected_files.add(name)
+    promotion_verified = False
+    if manifest['schema_id'] == 'manju.model-bundle/v2':
+        from ..review.core import ReviewDocument, draft_member, validate_promotion
+        if req.stage != 'final':
+            raise AuthoringError('v2 proof bundles require a final request')
+        review = ReviewDocument.model_validate(load_json(member(root, 'DRAFT_REVIEW.json')))
+        candidate = next((c for c in review.session.candidates if c.sha256 == req.approved_draft_sha256), None)
+        if candidate is None:
+            raise AuthoringError('approved draft is not in the review')
+        name = draft_member(candidate)
+        validate_promotion(req, review, member(root, name))
+        expected_files.update({'DRAFT_REVIEW.json', name})
+        promotion_verified = True
+    if require_promotion and not promotion_verified:
+        raise AuthoringError('this bundle has no verified final-promotion proof')
     if set(manifest['files']) != expected_files:
         raise AuthoringError('unexpected bundle payload, even if rechecksummed')
     return {'ok': True, 'request_sha256': digest(req), 'profile_id': app.profile_id,
             'mode_id': app.mode_id, 'assets': len(req.assets),
+            'schema_id': manifest['schema_id'], 'promotion_verified': promotion_verified,
+            'review_scope': 'Included historical local declarations, not global revocation or identity verification.',
+            'legacy_final_declaration_only': req.stage == 'final' and not promotion_verified,
             'external_execution_authorized': False,
             'note': 'Local consistency, not an external identity signature or vendor acceptance.'}

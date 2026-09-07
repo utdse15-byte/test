@@ -77,18 +77,21 @@ def approve_command(request: Path, profile: str = typer.Option(..., '--profile')
 def bundle_command(request: Path, approval: Path,
                    asset_root: Path = typer.Option(Path('.'), '--asset-root'),
                    catalog: Optional[Path] = typer.Option(None, '--catalog'),
+                   draft_review: Optional[Path] = typer.Option(None, '--draft-review'),
+                   draft_file: Optional[Path] = typer.Option(None, '--draft-file'),
                    output: Path = typer.Option(..., '--output')):
     """校验实际素材字节并创建一个新目录；绝不覆盖既有交接包。"""
     path = write_bundle(Request.model_validate(load_json(request)), load_catalog(catalog),
-                        Approval.model_validate(load_json(approval)), asset_root, output)
+                        Approval.model_validate(load_json(approval)), asset_root, output,
+                        draft_review=load_json(draft_review) if draft_review else None, draft_file=draft_file)
     _emit({'bundle': str(path), **verify_bundle(path)})
 
 
 @app.command('verify')
 @_guard
-def verify_command(bundle: Path):
+def verify_command(bundle: Path, require_promotion: bool = typer.Option(False, '--require-promotion')):
     """核验包、批准、素材、说明的一致性，不代表供应商可接受。"""
-    _emit(verify_bundle(bundle))
+    _emit(verify_bundle(bundle, require_promotion=require_promotion))
 
 
 @app.command('diff')

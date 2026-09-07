@@ -1,0 +1,68 @@
+{
+  "schema_id": "manju.review-document/v1",
+  "session": {
+    "schema_id": "manju.review-session/v1",
+    "request": {
+      "schema_id": "manju.model-request/v1",
+      "shot_id": "试镜：保持连续运动",
+      "task": "create",
+      "prompt": "合成流程演练：比较运动连续性，固定镜头，不改变主体。",
+      "duration_s": 8,
+      "resolution": "720p",
+      "aspect_ratio": "16:9",
+      "assets": [],
+      "preserve": [],
+      "change": [],
+      "stage": "draft",
+      "approved_draft_sha256": null
+    },
+    "request_sha256": "21e83e114d88ae9b435cea92a668dd72894dbb2be52e4280dbee5a1622ecf5d5",
+    "candidates": [
+      {
+        "sha256": "30acca9e07236f463409b4cca1e49b1f01ecd6c987bb7f35368585bd79a0e0b0",
+        "bytes": 177682,
+        "filename": "合成候选1.mp4",
+        "duration_ms": 2000,
+        "width": 640,
+        "height": 360,
+        "media_check": "browser_metadata"
+      },
+      {
+        "sha256": "5b425976fa7b4ba42e03ec4ef9ff737111f445cf913cee7f0ffcc0ea2fac1cfc",
+        "bytes": 3909,
+        "filename": "合成候选2.mp4",
+        "duration_ms": 2000,
+        "width": 640,
+        "height": 360,
+        "media_check": "browser_metadata"
+      }
+    ],
+    "nonce": "9adce1c2a3c5fcc21f8459b2460f7fa4",
+    "blind_order": [
+      "5b425976fa7b4ba42e03ec4ef9ff737111f445cf913cee7f0ffcc0ea2fac1cfc",
+      "30acca9e07236f463409b4cca1e49b1f01ecd6c987bb7f35368585bd79a0e0b0"
+    ],
+    "no_automatic_selection": true,
+    "session_sha256": "4c2e8193d628928ebb2b686f4da7335abb5700a2dfe12a2f3e1c6a213f8bd55e"
+  },
+  "decisions": [
+    {
+      "schema_id": "manju.review-decision/v1",
+      "session_sha256": "4c2e8193d628928ebb2b686f4da7335abb5700a2dfe12a2f3e1c6a213f8bd55e",
+      "request_sha256": "21e83e114d88ae9b435cea92a668dd72894dbb2be52e4280dbee5a1622ecf5d5",
+      "candidate_sha256": "5b425976fa7b4ba42e03ec4ef9ff737111f445cf913cee7f0ffcc0ea2fac1cfc",
+      "sequence": 1,
+      "previous_decision_sha256": null,
+      "verdict": "approve_draft",
+      "reviewer": "合成演练，不是用户实际批准",
+      "notes": "测试图案可播放且连续；本次只验收审片记录和定稿封包，不评价商业模型画质。",
+      "criteria": {
+        "prompt_adherence": 4
+      },
+      "declared_at": "2026-09-07T04:46:08Z",
+      "human_declared": true,
+      "picture_lock_authorized": false,
+      "decision_sha256": "7ccbafc79ac9e957c0732fa3df7c375fd84a57ad2594806474dccb5480c65b99"
+    }
+  ]
+}

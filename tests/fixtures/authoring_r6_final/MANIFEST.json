@@ -1,0 +1,11 @@
+{
+  "schema_id": "manju.model-bundle/v2",
+  "files": {
+    "REQUEST.json": "cd94ca9b8fc988bd61514ba73b641492567115871d66b733f6c9cf736cde1604",
+    "CATALOG.json": "05734646eb161ce2c7216a462da165e14278eba38416e4bc25c8e2eb02adc988",
+    "APPROVAL.json": "090565782d825c6700476476ab692349c5e248bdd05883e8208fec7f12c32be1",
+    "BRIEF.md": "42ab57c45e7177fb442943a63682f42d3089f15e4ac4c12cfafb8ab16343f9dd",
+    "DRAFT_REVIEW.json": "562be9cf0de5e5368b937aab2bc049047d7c60709ad6fdd1ba4c7b591d5f380d",
+    "approved-draft/5b425976fa7b4ba42e03ec4ef9ff737111f445cf913cee7f0ffcc0ea2fac1cfc.mp4": "5b425976fa7b4ba42e03ec4ef9ff737111f445cf913cee7f0ffcc0ea2fac1cfc"
+  }
+}

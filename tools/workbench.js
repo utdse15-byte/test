@@ -74,7 +74,50 @@ function jsonBytes(value){return encoder.encode(JSON.stringify(value,null,2)+'\n
 function download(blob,name){const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
 function zipStore(entries){require(entries.length<65535,'ZIP 条目过多');const parts=[],central=[];let offset=0;for(const entry of entries){safePath(entry.name);const name=encoder.encode(entry.name),size=entry.data.size??entry.data.byteLength;require(size<=0xffffffff&&offset+size<0xffffffff,'超出 ZIP32 大小限制');const header=new Uint8Array(30+name.length),v=new DataView(header.buffer);v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x800,true);v.setUint16(12,33,true);v.setUint32(14,entry.crc,true);v.setUint32(18,size,true);v.setUint32(22,size,true);v.setUint16(26,name.length,true);header.set(name,30);parts.push(header,entry.data);const c=new Uint8Array(46+name.length),d=new DataView(c.buffer);d.setUint32(0,0x02014b50,true);d.setUint16(4,20,true);d.setUint16(6,20,true);d.setUint16(8,0x800,true);d.setUint16(14,33,true);d.setUint32(16,entry.crc,true);d.setUint32(20,size,true);d.setUint32(24,size,true);d.setUint16(28,name.length,true);d.setUint32(42,offset,true);c.set(name,46);central.push(c);offset+=header.length+size;}const centralSize=central.reduce((n,c)=>n+c.length,0),end=new Uint8Array(22),v=new DataView(end.buffer);v.setUint32(0,0x06054b50,true);v.setUint16(8,entries.length,true);v.setUint16(10,entries.length,true);v.setUint32(12,centralSize,true);v.setUint32(16,offset,true);return new Blob([...parts,...central,end],{type:'application/zip'});}
 function brief(r,p,m){let rows=['# Manju 模型交接说明','',`镜头：${r.shot_id}`,`创作任务：${r.task} / ${r.stage}`,`作者适配档：${p.label} / ${m.id}`,`使用入口：${p.entry}；本项目未连接此商业服务。`,'','## 提示词','',r.prompt,'','## 保留项',...r.preserve.map(s=>'- '+s),'','## 改变项',...r.change.map(s=>'- '+s),'','## 目标参数',`时长：${r.duration_s===null?'None':r.duration_s} 秒；分辨率：${r.resolution===null?'None':r.resolution}；画幅：${r.aspect_ratio===null?'None':r.aspect_ratio}`,'','## 素材绑定',...r.assets.map(a=>`- ${a.id} | ${a.role} | assets/${a.path} | SHA-256 ${a.sha256}`)];if(r.approved_draft_sha256)rows.push('',`已批准草稿内容：${r.approved_draft_sha256}`);rows.push('','## 能力证据',p.source_url,`核验：${p.checked_on}；复核期限：${p.review_after}；声明：${p.claim_id}`,'','未知、账户、地区、价格、可用性和媒体编码限制仍需提交前核验。','人工批准只固定这份创作交接，不授权付费、不自动选片、不批准 Picture Lock。','');return rows.join('\n');}
-async function exportBundle(){require(!state.busy,'文件仍在处理中');const request=getRequest(),selected=state.selected,revision=state.revision;require(selected&&state.plan,'先检查适配并明确选择一个模式');require($('human-confirmed').checked&&$('ack-warnings').checked,'请先明确确认创作交接并阅读告警');const reviewer=string($('reviewer').value,120,'确认人',1);const now=new Date(),day=now.toISOString().slice(0,10),option=options(request,catalog,day).find(o=>o.profile_id===selected.profile_id&&o.mode_id===selected.mode_id);require(option?.compatible,'当前任务和模式不再兼容，请重新检查');for(const a of request.assets)require(state.files.has(a.sha256),'缺少实际素材文件：'+a.path);state.busy=true;$('export-bundle').disabled=true;try{const approval={schema_id:'manju.model-approval/v1',request_sha256:await hash(request),catalog_sha256:await hash(catalog),profile_id:selected.profile_id,mode_id:selected.mode_id,reviewer,declared_at:now.toISOString(),acknowledged_warnings:option.warnings,human_declared:true,external_execution_authorized:false};const profile=catalog.profiles.find(p=>p.id===selected.profile_id),mode=profile.modes.find(m=>m.id===selected.mode_id);let entries=[],manifest={schema_id:'manju.model-bundle/v1',files:{}};for(const [name,data]of [['REQUEST.json',jsonBytes(request)],['CATALOG.json',jsonBytes(catalog)],['APPROVAL.json',jsonBytes(approval)],['BRIEF.md',encoder.encode(brief(request,profile,mode))]]){entries.push({name,data,crc:crc32(data)});manifest.files[name]=await hash(data);}const names=new Set();for(const a of request.assets){const name='assets/'+a.path;if(names.has(name))continue;names.add(name);status('正在重新校验并封装：'+a.path);const entry=await inspectFile(state.files.get(a.sha256).file);require(entry.sha256===a.sha256&&entry.file.size===a.bytes,'素材内容变化，拒绝使用旧审批');entries.push({name,data:entry.file,crc:entry.crc});manifest.files[name]=a.sha256;}require(revision===state.revision,'任务在封包期间发生变化，未导出旧审批');const data=jsonBytes(manifest);entries.push({name:'MANIFEST.json',data,crc:crc32(data)});download(zipStore(entries),'MANJU_HANDOFF_'+approval.request_sha256.slice(0,12)+'.zip');state.dirty=false;status('已触发素材包下载。请在浏览器下载列表确认并保存；本页面无法替你确认磁盘保存是否成功。');}finally{state.busy=false;$('export-bundle').disabled=false;}}
+async function exportBundle(){
+ require(!state.busy,'文件仍在处理中');
+ const request=getRequest(),selected=state.selected,revision=state.revision;
+ require(selected&&state.plan,'先检查适配并明确选择一个模式');
+ require($('human-confirmed').checked&&$('ack-warnings').checked,'请先明确确认创作交接并阅读告警');
+ const reviewer=string($('reviewer').value,120,'确认人',1),now=new Date(),day=now.toISOString().slice(0,10);
+ const option=options(request,catalog,day).find(o=>o.profile_id===selected.profile_id&&o.mode_id===selected.mode_id);
+ require(option?.compatible,'当前任务和模式不再兼容，请重新检查');
+ for(const a of request.assets)require(state.files.has(a.sha256),'缺少实际素材文件：'+a.path);
+ state.busy=true;$('export-bundle').disabled=true;
+ try{
+  let proof=null;
+  if(request.stage==='final'){
+   require(window.ManjuReview,'本版本没有审片证据检查器，拒绝仅靠哈希声明导出定稿');
+   proof=await window.ManjuReview.promotionProof(request);
+  }
+  const approval={schema_id:'manju.model-approval/v1',request_sha256:await hash(request),catalog_sha256:await hash(catalog),profile_id:selected.profile_id,mode_id:selected.mode_id,reviewer,declared_at:now.toISOString(),acknowledged_warnings:option.warnings,human_declared:true,external_execution_authorized:false};
+  const profile=catalog.profiles.find(p=>p.id===selected.profile_id),mode=profile.modes.find(m=>m.id===selected.mode_id);
+  let entries=[],manifest={schema_id:proof?'manju.model-bundle/v2':'manju.model-bundle/v1',files:{}};
+  for(const [name,data]of [['REQUEST.json',jsonBytes(request)],['CATALOG.json',jsonBytes(catalog)],['APPROVAL.json',jsonBytes(approval)],['BRIEF.md',encoder.encode(brief(request,profile,mode))]]){
+   entries.push({name,data,crc:crc32(data)});manifest.files[name]=await hash(data);
+  }
+  const names=new Set();
+  for(const a of request.assets){
+   const name='assets/'+a.path;if(names.has(name))continue;names.add(name);
+   status('正在重新校验并封装：'+a.path);
+   const entry=await inspectFile(state.files.get(a.sha256).file);
+   require(entry.sha256===a.sha256&&entry.file.size===a.bytes,'素材内容变化，拒绝使用旧审批');
+   entries.push({name,data:entry.file,crc:entry.crc});manifest.files[name]=a.sha256;
+  }
+  if(proof){
+   const data=jsonBytes(proof.document),name='DRAFT_REVIEW.json';require(data.length<=2*1024*1024,'审片记录过大');
+   entries.push({name,data,crc:crc32(data)});manifest.files[name]=await hash(data);
+   const draft='approved-draft/'+proof.candidate.sha256+extension(proof.candidate.filename);
+   entries.push({name:draft,data:proof.entry.file,crc:proof.entry.crc});manifest.files[draft]=proof.candidate.sha256;
+   require(proof.revision===window.ManjuReview.state.revision,'审片记录在封包期间改变，未导出旧决定');
+  }
+  require(entries.reduce((n,e)=>n+(e.data.size??e.data.byteLength),0)<=MAX_TOTAL,'封包超过浏览器本地 512 MiB 限制');
+  require(revision===state.revision,'任务在封包期间发生变化，未导出旧审批');
+  const data=jsonBytes(manifest);entries.push({name:'MANIFEST.json',data,crc:crc32(data)});
+  download(zipStore(entries),'MANJU_HANDOFF_'+approval.request_sha256.slice(0,12)+'.zip');
+  state.dirty=false;status('已触发素材包下载。请在浏览器下载列表确认并保存；本页面无法替你确认磁盘保存是否成功。');
+ }finally{state.busy=false;$('export-bundle').disabled=false;}
+}
 async function parseFile(file){require(file&&file.size<=2*1024*1024,'JSON 最大 2 MiB');return JSON.parse(await file.text());}
 async function importRequest(file){let value=await parseFile(file),context=null;if(value.schema_id==='manju.project-authoring-import/v1'){require(await hash(value.source_plan)===value.source_plan_sha256,'原项目上下文哈希不符');context={source_plan:value.source_plan,source_plan_sha256:value.source_plan_sha256,warnings:value.warnings||[]};value=value.request;}const request=normalizeRequest(value);state.generation++;state.files=new Map([...state.files].filter(([h])=>request.assets.some(a=>a.sha256===h)));state.sourceContext=context;fillRequest(request);showContext();invalidate();status('已导入任务。媒体字节未写入草稿，请重新选择本地文件绑定；原工程没有被修改。');}
 function showContext(){$('source-details').hidden=!state.sourceContext;$('source-context').textContent=state.sourceContext?JSON.stringify(state.sourceContext,null,2):'';}
