@@ -875,6 +875,15 @@ schemas:
     read_older: false
     write_older: false
     notes: Offline checkpoint only; no approvals or project changes on restore.
+  - id: manju.catalog-review/v1
+    kind: schema
+    owner: manju.authoring.catalog_review
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Read-only field-level authoring capability and task-impact report. Not approval or remote evidence verification.
+
   - id: manju.return-preflight/v1
     kind: schema
     owner: manju.authoring.returns
@@ -1120,6 +1129,7 @@ documents:
       `format: support-bundle-manifest.1` field — deliberately NOT a manju.*/vN
       schema). Default-deny collectors; self-scan tripwire refuses to write any
       bundle containing secret/path markers; never media bytes or source content.
+
 
 # ---------------------------------------------------------------------------
 # ownership — §4.7 object ownership map. One authoritative owner per concept;

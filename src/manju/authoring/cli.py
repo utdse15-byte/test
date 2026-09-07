@@ -142,3 +142,17 @@ def inspect_return_command(request: Path, candidate: list[Path] = typer.Option(.
     """只读核对返回视频的时长、画幅和最低短边；不打画质分、不选片。"""
     from .returns import inspect_files
     _emit(inspect_files(Request.model_validate(load_json(request)), candidate, decode=decode), output)
+
+
+@app.command('catalog-review')
+@_guard
+def catalog_review_command(before: Path, after: Path,
+                           request: Optional[Path] = typer.Option(None, '--request'),
+                           on: Optional[str] = typer.Option(None, '--on'),
+                           output: Optional[Path] = typer.Option(None, '--output')):
+    """逐字段比较能力修订与当前任务影响；日期不是远端核验或自动应用。"""
+    from datetime import date
+    from .catalog_review import review_catalog
+    _emit(review_catalog(load_catalog(before), load_catalog(after),
+          Request.model_validate(load_json(request)) if request else None,
+          today=date.fromisoformat(on) if on else None), output)

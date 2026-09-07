@@ -363,6 +363,13 @@
     "exists": true,
     "params": []
   },
+  "models catalog-review": {
+    "exists": true,
+    "params": [
+      "after",
+      "before"
+    ]
+  },
   "models diff": {
     "exists": true,
     "params": [

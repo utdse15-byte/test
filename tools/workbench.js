@@ -118,7 +118,21 @@ async function exportBundle(){
   state.dirty=false;status('已触发素材包下载。请在浏览器下载列表确认并保存；本页面无法替你确认磁盘保存是否成功。');
  }finally{state.busy=false;$('export-bundle').disabled=false;}
 }
-async function parseFile(file){require(file&&file.size<=2*1024*1024,'JSON 最大 2 MiB');return JSON.parse(await file.text());}
+// Strict JSON boundary for untrusted imports: reject duplicate keys and deep nesting.
+function strictJSON(text){
+ require(typeof text==='string'&&text.length<=2*1024*1024,'JSON 超过上限');let pos=0;
+ const white=()=>{while(pos<text.length&&/[ \t\r\n]/.test(text[pos]))pos++;};
+ function str(){const start=pos++;while(pos<text.length){const ch=text[pos++];if(ch==='"')return JSON.parse(text.slice(start,pos));if(ch==='\\'){require(pos<text.length,'JSON 字符串未结束');pos++;}}throw new Error('JSON 字符串未结束');}
+ function value(depth){require(depth<=64,'JSON 嵌套过深');white();const ch=text[pos];
+  if(ch==='"')return str();
+  if(ch==='{'){pos++;white();const out=Object.create(null),seen=new Set();if(text[pos]==='}'){pos++;return out;}while(true){white();require(text[pos]==='"','JSON 对象键必须是字符串');const key=str();require(!seen.has(key),'JSON 重复字段：'+key);seen.add(key);white();require(text[pos++]===':','JSON 缺少冒号');out[key]=value(depth+1);white();const sep=text[pos++];if(sep==='}')return out;require(sep===',','JSON 对象分隔符错误');}}
+  if(ch==='['){pos++;white();const out=[];if(text[pos]===']'){pos++;return out;}while(true){out.push(value(depth+1));white();const sep=text[pos++];if(sep===']')return out;require(sep===',','JSON 数组分隔符错误');}}
+  for(const [token,result] of [['true',true],['false',false],['null',null]])if(text.startsWith(token,pos)){pos+=token.length;return result;}
+  const match=/^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(text.slice(pos));require(match,'JSON 值无效');pos+=match[0].length;const n=Number(match[0]);require(Number.isFinite(n),'JSON 数字非有限');return n;
+ }
+ const out=value(0);white();require(pos===text.length,'JSON 包含尾随内容');return out;
+}
+async function parseFile(file){require(file&&file.size<=2*1024*1024,'JSON 最大 2 MiB');return strictJSON(await file.text());}
 async function importRequest(file){let value=await parseFile(file),context=null;if(value.schema_id==='manju.project-authoring-import/v1'){require(await hash(value.source_plan)===value.source_plan_sha256,'原项目上下文哈希不符');context={source_plan:value.source_plan,source_plan_sha256:value.source_plan_sha256,warnings:value.warnings||[]};value=value.request;}const request=normalizeRequest(value);state.generation++;state.files=new Map([...state.files].filter(([h])=>request.assets.some(a=>a.sha256===h)));state.sourceContext=context;fillRequest(request);showContext();invalidate();status('已导入任务。媒体字节未写入草稿，请重新选择本地文件绑定；原工程没有被修改。');}
 function showContext(){$('source-details').hidden=!state.sourceContext;$('source-context').textContent=state.sourceContext?JSON.stringify(state.sourceContext,null,2):'';}
 function handled(fn){return async(...args)=>{try{await fn(...args);}catch(e){status(e.message||String(e),true);}};}
@@ -128,7 +142,7 @@ $('check-plan').addEventListener('click',handled(renderPlan));$('asset-files').a
 $('export-request').addEventListener('click',handled(async()=>{const r=getRequest();download(new Blob([jsonBytes(r)],{type:'application/json'}),'MANJU_REQUEST_'+(await hash(r)).slice(0,12)+'.json');state.dirty=false;status('已触发任务 JSON 下载。此文件不包含媒体，请自行确认下载列表。');}));
 $('export-bundle').addEventListener('click',handled(exportBundle));$('export-catalog').addEventListener('click',()=>download(new Blob([jsonBytes(catalog)],{type:'application/json'}),'MANJU_CATALOG.json'));
 $('import-request').addEventListener('change',handled(async e=>{await importRequest(e.target.files[0]);e.target.value='';}));
-$('import-catalog').addEventListener('change',handled(async e=>{catalog=normalizeCatalog(await parseFile(e.target.files[0]));invalidate();status('已加载用户提供的能力档。来源网页没有被自动访问；请自行核验其真实性和时效。');e.target.value='';}));
+$('import-catalog').addEventListener('change',handled(async e=>{try{await previewCatalog(await parseFile(e.target.files[0]));}finally{e.target.value='';}}));
 $('reset').addEventListener('click',()=>{if(!confirm('清空当前页面的任务草稿？已经导出的文件不会被删除。'))return;state.generation++;state.files.clear();state.sourceContext=null;fillRequest({shot_id:'镜头01',task:'create',prompt:'',duration_s:8,resolution:'720p',aspect_ratio:'16:9',assets:[],preserve:[],change:[],stage:'draft',approved_draft_sha256:null});$('reviewer').value='';showContext();invalidate();state.dirty=false;try{localStorage.removeItem(STORE);}catch{}status('已清空当前任务。磁盘中的原素材和导出文件没有改变。');});
 window.addEventListener('beforeunload',e=>{if(state.dirty){e.preventDefault();e.returnValue='';}});
 chooseValue('resolution','720p');chooseValue('ratio','16:9');
@@ -138,4 +152,5 @@ window.ManjuWorkbench={SHA256,normalizeRequest,normalizeCatalog,modeReport,optio
 // REVIEW_SCRIPT
 // WORKSPACE_SCRIPT
 // RETURNS_SCRIPT
+// CATALOG_SCRIPT
 })();

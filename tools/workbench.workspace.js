@@ -87,7 +87,7 @@ async function storedZipMembers(blob) {
 async function readWorkspace(blob) {
  const entries=await storedZipMembers(blob);
  require(entries.has('WORKSPACE.json')&&entries.has('MANIFEST.json'),'工作现场元数据缺失');
- const parse=async name=>{const e=entries.get(name),bytes=new Uint8Array(await e.data.arrayBuffer());require(crc32(bytes)===e.crc,'元数据 CRC 不符');return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));};
+ const parse=async name=>{const e=entries.get(name),bytes=new Uint8Array(await e.data.arrayBuffer());require(crc32(bytes)===e.crc,'元数据 CRC 不符');return strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(bytes));};
  const manifest=await parse('MANIFEST.json');exactKeys(manifest,['schema_id','files'],'备份清单');
  require(manifest.schema_id==='manju.workspace-manifest/v1'&&manifest.files&&typeof manifest.files==='object'&&!Array.isArray(manifest.files),'未知清单');
  require(canonical(Object.keys(manifest.files).sort())===canonical([...entries.keys()].filter(n=>n!=='MANIFEST.json').sort()),'备份清单不完整');

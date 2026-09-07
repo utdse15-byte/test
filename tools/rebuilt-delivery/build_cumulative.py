@@ -25,6 +25,20 @@ def run(args, cwd=None):
     return result.stdout
 
 
+def publish_new(source: Path, destination: Path) -> None:
+    """Copy exclusively; never unlink a pre-existing/racing destination."""
+    owned = False
+    try:
+        with destination.open('xb') as dst:
+            owned = True
+            with source.open('rb') as src:
+                shutil.copyfileobj(src, dst)
+    except BaseException:
+        if owned:
+            destination.unlink(missing_ok=True)
+        raise
+
+
 def build(repo: Path, output: Path, evidence: Path) -> dict:
     if output.exists() or output.is_symlink():
         raise FileExistsError('Existing downloads are never overwritten')
@@ -107,12 +121,7 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
                 'zip_crc_passed':True,'fresh_extraction_checked':True,
                 'formal_windows_release':False,'client_download_confirmed':False,
                 'base_r7_is_ancestor':True,'tests_are_separate_evidence':True}
-        # The exclusive handle gives this invocation sole ownership on failure.
-        try:
-            with output.open('xb') as dst,archive.open('rb') as src:shutil.copyfileobj(src,dst)
-        except BaseException:
-            if output.exists() and output.stat().st_size!=archive.stat().st_size:output.unlink()
-            raise
+        publish_new(archive, output)
         if sha256(output.read_bytes()).hexdigest()!=result['archive_sha256']:
             raise ValueError('Published archive differs from verified file')
         with receipt_path.open('x',encoding='utf-8') as stream:

@@ -29,7 +29,13 @@ def approved(r,c=None,profile='veo-3.1-generate-preview',mode='text'):
     return approve(r,c or load_catalog(),profile,mode,reviewer='离线测试者',human_confirmed=True,acknowledge_warnings=True,now=NOW)
 
 def test_catalog_current_specificity():
-    c=load_catalog(); assert len(c.profiles)==8
+    c=load_catalog()
+    # Catalogs are extensible; pin inherited identities rather than a count.
+    assert {
+        'minimax-h3','minimax-h3-max','gemini-omni-1.1-flash',
+        'veo-3.1-generate-preview','veo-3.1-fast-generate-preview',
+        'runway-keyframes-app','runway-edit-studio','luma-ray3-modify'
+    }.issubset({p.id for p in c.profiles})
     assert all(p.status=='authoring_only' for p in c.profiles)
     fast=next(p for p in c.profiles if p.id=='minimax-h3-max')
     assert all(m.task!='reference' for m in fast.modes)

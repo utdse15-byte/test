@@ -1,6 +1,6 @@
 {
   "schema_id": "manju.model-catalog/v1",
-  "revision": "2026-09-06.r10.1",
+  "revision": "2026-09-06.rebuilt-r4.1",
   "profiles": [
     {
       "id": "minimax-h3",
@@ -1421,89 +1421,6 @@
         "本档针对 Ray3 Modify 指南，不替代 Ray3.2 或旧 Ray2 API 的参数契约。",
         "高修改强度可能降低原镜头和运动保真度；不能承诺保留项一定被执行。",
         "旧指南中的尾帧卡实际取第5秒画面。本档拒绝对超过5秒的输入把该卡当作整段最后一帧。"
-      ]
-    },
-    {
-      "id": "runway-gen-4-5-web",
-      "label": "Runway Gen-4.5 网页工作流",
-      "vendor": "Runway",
-      "model_id": "Gen-4.5",
-      "entry": "product_workflow",
-      "status": "authoring_only",
-      "claim_id": "runway-gen-4-5-web-20260906",
-      "source_url": "https://help.runwayml.com/hc/en-us/articles/46974685288467-Creating-with-Gen-4-5",
-      "checked_on": "2026-09-06",
-      "review_after": "2026-09-20",
-      "modes": [
-        {
-          "id": "text",
-          "task": "create",
-          "roles": {},
-          "min_total_assets": 0,
-          "durations": null,
-          "duration_range": [
-            2,
-            10
-          ],
-          "resolutions": [
-            "720p"
-          ],
-          "aspect_ratios": [
-            "16:9"
-          ],
-          "high_resolution_requires_s": null,
-          "high_resolutions": [],
-          "input_duration_max_ms": {},
-          "input_duration_min_ms": {},
-          "input_total_duration_max_ms": {},
-          "input_bytes_max": {},
-          "input_extensions": {},
-          "required_origin_model": null,
-          "last_frame_max_source_ms": null,
-          "notes": []
-        },
-        {
-          "id": "first",
-          "task": "animate",
-          "roles": {
-            "first_frame": [
-              1,
-              1
-            ]
-          },
-          "min_total_assets": 0,
-          "durations": null,
-          "duration_range": [
-            2,
-            10
-          ],
-          "resolutions": [
-            "720p"
-          ],
-          "aspect_ratios": [
-            "16:9",
-            "9:16",
-            "1:1",
-            "4:3",
-            "3:4",
-            "21:9"
-          ],
-          "high_resolution_requires_s": null,
-          "high_resolutions": [],
-          "input_duration_max_ms": {},
-          "input_duration_min_ms": {},
-          "input_total_duration_max_ms": {},
-          "input_bytes_max": {},
-          "input_extensions": {},
-          "required_origin_model": null,
-          "last_frame_max_source_ms": null,
-          "notes": []
-        }
-      ],
-      "notes": [
-        "仅据官方网页工作流核验；不推断 API 不存在，也不自动调用。",
-        "此型号档仅文本与单首帧；不能借用其他 Apps 的视频修改或尾帧能力。",
-        "720p 是厂商规格名称：超宽画幅为 1584×672，不能把本地最低短边提醒当作画质判定。"
       ]
     }
   ]

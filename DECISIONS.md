@@ -4600,3 +4600,17 @@ pixel checks use explicit local tolerances; ambiguous resolution labels remain
 unknown. Optional full video decode uses the existing media process owner and
 file/pipe-only input. No implicit provider origin claim, take selection, source
 edit or payment authorization follows from a technical match.
+
+## CONTINUATION-R10 (2026-09-07 UTC)
+
+Capability imports are a staged change review, not live configuration refresh.
+Compare individual profile/mode fields and the exact current request; require an
+explicit apply and invalidate present choices. A changed workspace or calendar
+day requires a new preview. Dates are source declarations, not authenticated
+vendor checks. Old embedded catalogs and Request/v1 hashes retain their meaning.
+
+Runway Gen-4.5 gains only the documented web authoring modes. Existing Omni and
+seven other inherited profiles remain byte-equivalent after normalization.
+Untrusted JSON has a strict duplicate-key boundary. Technical report text wraps
+rather than hiding content on narrow screens. Publishing owns only exclusively
+created files; failure cannot remove another producer's existing download.

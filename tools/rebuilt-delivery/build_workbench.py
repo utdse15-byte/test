@@ -18,6 +18,9 @@ if workspace_js.is_file():
 returns_js=root/'tools/workbench.returns.js'
 if returns_js.is_file():
  script=script.replace('// RETURNS_SCRIPT',returns_js.read_text(encoding='utf-8'))
+catalog_js=root/'tools/workbench.catalog.js'
+if catalog_js.is_file():
+ script=script.replace('// CATALOG_SCRIPT',catalog_js.read_text(encoding='utf-8'))
 # Do not allow JSON strings or program string literals to close a script tag.
 html=template.replace('__CATALOG__',catalog.replace('</','<\\/')).replace('__SCRIPT__',script.replace('</script','<\\/script')).replace('__RELEASE__',release)
 for path in [root/'tools/model_workbench.html',root/'src/manju/authoring/data/workbench.html']:
