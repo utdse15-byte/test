@@ -1,0 +1,20 @@
+{
+  "stage": "R3",
+  "version": "0.2.0+r3.rebuilt",
+  "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
+  "inherits": [
+    "R2"
+  ],
+  "features": {
+    "R3": [
+      "本地进程取消/清理失败区分",
+      "截图先验证后原子替换",
+      "取消不启动回退",
+      "已完成候选在生成、单镜重做、批量重做中保留"
+    ]
+  },
+  "original_r3_r4_bytes_recovered": false,
+  "reconstruction": true,
+  "formal_windows_release": false,
+  "commercial_api_executed": false
+}

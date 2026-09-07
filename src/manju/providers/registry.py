@@ -280,6 +280,8 @@ def generate_with_fallback(
         order = ([preferred] if preferred else [])
         order += [name for name in chain if name not in order]
 
+    from ..media.ffmpeg import MediaCanceled, MediaCleanupError
+
     media_errors = _media_error_types()
     attempts: list[tuple[str, str]] = []
 
@@ -313,6 +315,13 @@ def generate_with_fallback(
                 handle.attempt_id if handle is not None else None
             )
             takes = provider.generate(attempt_req)
+        except MediaCanceled as exc:
+            if handle is not None:
+                _emit_ctx.canceled(handle, exc.completed_takes)
+            raise
+        except MediaCleanupError:
+            # Never hide an unconfirmed teardown by starting a fallback renderer.
+            raise
         except NeedsHumanInput as exc:
             attempts.append((name, f"needs human input: {exc}"))
             if handle is not None:
@@ -477,6 +486,20 @@ class _EvidenceChain:
             aid = (rec.get("detail") or {}).get("attempt_id") if rec else handle.attempt_id
             for t in takes:
                 self.ev.note_take_attempt(getattr(t, "shot_id", self.shot_id), t.name, aid)
+            self._prev_id = handle.attempt_id
+        except Exception:
+            pass
+
+    def canceled(self, handle, takes: tuple) -> None:
+        try:
+            from ..core.hashing import hash_file
+            outputs = [self._A.output_ref(
+                "take", path=self.req.project.relpath(t.media_path),
+                sha256=hash_file(t.media_path), bytes=t.media_path.stat().st_size,
+                take=t.name) for t in takes]
+            handle.canceled(outputs=outputs, decision={"remote_may_continue": False})
+            for t in takes:
+                self.ev.note_take_attempt(t.shot_id, t.name, handle.attempt_id)
             self._prev_id = handle.attempt_id
         except Exception:
             pass

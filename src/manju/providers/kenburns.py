@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from ..core.container import TakeInfo
+from ..media.ffmpeg import MediaCanceled, MediaCleanupError, cancel_scope, check_canceled
 from .base import FailureKind, GenerationRequest, Provider, ProviderFailure
 
 
@@ -20,6 +21,11 @@ class KenburnsProvider(Provider):
     kind = "local"
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        with cancel_scope(req.should_cancel):
+            check_canceled()
+            return self._generate(req)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
         refset = req.refset()
         image = refset.primary_image
         image_source = refset.primary_image_source
@@ -46,6 +52,7 @@ class KenburnsProvider(Provider):
         takes: list[TakeInfo] = []
         try:
             for i in range(n):
+                check_canceled()
                 zoom_to = round(1.10 + 0.03 * i, 4)  # vary motion per candidate
                 dest = tmp / f"cand_{i:02d}.mp4"
                 out = kenburns(
@@ -82,6 +89,9 @@ class KenburnsProvider(Provider):
                         },
                     )
                 )
+        except MediaCanceled as exc:
+            exc.completed_takes = tuple(takes)
+            raise
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         return takes

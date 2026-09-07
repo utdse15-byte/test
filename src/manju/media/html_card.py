@@ -17,11 +17,14 @@ import html
 import os
 import shutil
 import subprocess
+import struct
+import zlib
 import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from .ffmpeg import MediaError, run_ffmpeg
+from .ffmpeg import (MediaError, MediaCanceled, atomic_output, check_canceled,
+                     _run_local_process, run_ffmpeg)
 
 _CHROMIUM_CANDIDATES = (
     "chromium", "chromium-browser", "google-chrome", "headless_shell",
@@ -240,22 +243,65 @@ def render_card_png(text: str, dest_png: Path, *, width: int, height: int,
                      kicker_px=max(14, short // 34),
                      bg=bg, bg_edge=bg_edge, text_color=text_color,
                      accent=accent, justify=justify)
-    with tempfile.TemporaryDirectory(prefix="manju_html_") as tmp:
+    check_canceled()
+    with tempfile.TemporaryDirectory(prefix="manju_html_", ignore_cleanup_errors=True) as tmp:
         page = Path(tmp) / "card.html"
         page.write_text(doc, encoding="utf-8")
-        proc = subprocess.run(
-            [str(chromium), "--headless", "--disable-gpu", "--no-sandbox",
-             "--hide-scrollbars", "--force-device-scale-factor=1",
-             f"--window-size={width},{height}", f"--screenshot={dest_png}",
-             page.as_uri()],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
-        )
-        if proc.returncode != 0 or not Path(dest_png).exists():
-            raise MediaError(
-                f"chromium screenshot failed (exit {proc.returncode}): "
-                + (proc.stderr or "")[-300:]
-            )
+        with atomic_output(Path(dest_png)) as staged:
+            try:
+                proc = _run_local_process(
+                    [str(chromium), "--headless", "--disable-gpu", "--no-sandbox",
+                     "--hide-scrollbars", "--force-device-scale-factor=1",
+                     f"--user-data-dir={Path(tmp) / 'profile'}",
+                     f"--window-size={width},{height}", f"--screenshot={staged}",
+                     page.as_uri()], timeout=60,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise MediaError("Chromium 截图超时,旧封面未更改") from exc
+            except OSError as exc:
+                raise MediaError(f"Chromium 截图无法启动或写入: {exc}") from exc
+            if proc.returncode != 0:
+                raise MediaError(f"chromium screenshot failed (exit {proc.returncode}): "
+                                 + (proc.stderr or "")[-300:])
+            _validate_png(staged, width=width, height=height)
+
     return Path(dest_png)
+
+
+def _validate_png(path: Path, *, width: int, height: int) -> None:
+    try:
+        if not path.is_file() or path.stat().st_size > 128 * 1024 * 1024:
+            raise ValueError("missing or oversized screenshot")
+        with path.open("rb") as f:
+            if f.read(8) != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("bad PNG signature")
+            first, data_seen = True, False
+            while True:
+                hdr = f.read(8)
+                if len(hdr) != 8:
+                    raise ValueError("truncated PNG")
+                size, kind = struct.unpack(">I4s", hdr)
+                if size > 128 * 1024 * 1024:
+                    raise ValueError("oversized PNG chunk")
+                data, crc = f.read(size), f.read(4)
+                if len(data) != size or len(crc) != 4:
+                    raise ValueError("truncated PNG chunk")
+                if zlib.crc32(kind + data) & 0xffffffff != struct.unpack(">I", crc)[0]:
+                    raise ValueError("PNG checksum mismatch")
+                if first:
+                    if kind != b"IHDR" or size != 13:
+                        raise ValueError("missing PNG dimensions")
+                    actual = struct.unpack(">II", data[:8])
+                    if actual != (width, height):
+                        raise ValueError(f"PNG size {actual}, expected {(width, height)}")
+                    first = False
+                data_seen |= kind == b"IDAT"
+                if kind == b"IEND":
+                    if size or not data_seen or f.read(1):
+                        raise ValueError("invalid PNG end")
+                    break
+    except (OSError, ValueError) as exc:
+        raise MediaError(f"截图未通过完整性校验,旧封面未更改: {exc}") from exc
 
 
 def html_card_video(text: str, dest: Path, *, width: int, height: int, fps: int,
@@ -266,18 +312,19 @@ def html_card_video(text: str, dest: Path, *, width: int, height: int, fps: int,
     ``preset`` (round X, agent XG) forwards to :func:`render_card_png`."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="manju_html_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="manju_html_", ignore_cleanup_errors=True) as tmp:
         png = render_card_png(text, Path(tmp) / "card.png",
                               width=width, height=height, template=template,
                               preset=preset)
         duration_s = max(0.05, duration_ms / 1000.0)
-        run_ffmpeg(
-            ["-loop", "1", "-framerate", str(fps), "-i", str(png),
-             "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
-             "-t", f"{duration_s:.3f}",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-             "-shortest", str(dest)],
-            log=log,
-        )
+        with atomic_output(dest) as staged:
+            run_ffmpeg(
+                ["-loop", "1", "-framerate", str(fps), "-i", str(png),
+                 "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+                 "-t", f"{duration_s:.3f}",
+                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                 "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+                 "-shortest", str(staged)],
+                log=log,
+            )
     return dest

@@ -52,10 +52,12 @@ class FakeProc:
 
 def _patch_popen(monkeypatch, proc: FakeProc) -> None:
     monkeypatch.setattr(ff.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(ff, "_signal_local_group", lambda *a: None)
 
 
-def _always_cancel() -> bool:
-    return True
+def _cancel_after_dispatch():
+    calls = iter([False, True])
+    return lambda: next(calls, True)
 
 
 # --------------------------------------------------------------------------- #
@@ -69,7 +71,7 @@ def test_cancel_is_requested_and_phase_stops(monkeypatch) -> None:
 
     def check() -> bool:
         calls["n"] += 1
-        return True
+        return calls["n"] > 1
 
     with pytest.raises(ff.MediaCanceled):
         ff._run_ffmpeg_cancelable(
@@ -85,9 +87,9 @@ def test_terminate_precedes_kill_when_process_survives_sigterm(monkeypatch) -> N
     with pytest.raises(ff.MediaCanceled):
         ff._run_ffmpeg_cancelable(
             ["ffmpeg"], project=None, subject=None, step="render",
-            log_name="render", timeout=None, check=_always_cancel)
+            log_name="render", timeout=None, check=_cancel_after_dispatch())
     # terminate FIRST, kill only after the grace period expires.
-    assert proc.events == ["terminate", "communicate_grace", "kill", "communicate"]
+    assert proc.events == ["terminate", "communicate_grace", "kill", "communicate_grace"]
     assert proc.events.index("terminate") < proc.events.index("kill")
 
 
@@ -97,7 +99,7 @@ def test_no_kill_when_sigterm_is_enough(monkeypatch) -> None:
     with pytest.raises(ff.MediaCanceled):
         ff._run_ffmpeg_cancelable(
             ["ffmpeg"], project=None, subject=None, step="render",
-            log_name="render", timeout=None, check=_always_cancel)
+            log_name="render", timeout=None, check=_cancel_after_dispatch())
     assert proc.events == ["terminate", "communicate_grace"]
     assert "kill" not in proc.events
 
@@ -110,7 +112,7 @@ def test_child_processes_reaped_before_terminate_on_windows(monkeypatch) -> None
     with pytest.raises(ff.MediaCanceled):
         ff._run_ffmpeg_cancelable(
             ["ffmpeg"], project=None, subject=None, step="render",
-            log_name="render", timeout=None, check=_always_cancel)
+            log_name="render", timeout=None, check=_cancel_after_dispatch())
     # the whole tree is killed BEFORE the direct terminate (its /T reach note).
     assert proc.events[0] == "taskkill_tree"
     assert proc.events.index("taskkill_tree") < proc.events.index("terminate")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manju"
-version = "0.2.0"
+version = "0.2.0+r3.rebuilt"
 description = "Manju One — a deterministic build system for video (text is truth, media is append-only)"
 requires-python = ">=3.11"
 dependencies = [

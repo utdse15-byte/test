@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 from ..core.container import TakeInfo
+from ..media.ffmpeg import MediaCanceled, MediaCleanupError, cancel_scope, check_canceled
 from .base import GenerationRequest, Provider
 
 
@@ -23,6 +24,11 @@ class CaptionCardProvider(Provider):
     kind = "local"
 
     def generate(self, req: GenerationRequest) -> list[TakeInfo]:
+        with cancel_scope(req.should_cancel):
+            check_canceled()
+            return self._generate(req)
+
+    def _generate(self, req: GenerationRequest) -> list[TakeInfo]:
         text = req.shot.dialogue.text or req.shot.action.main or req.shot.id
         config = req.project.load_config()
         want = req.params.get("renderer", "auto")  # auto | html | drawtext
@@ -42,6 +48,8 @@ class CaptionCardProvider(Provider):
                         fps=config.fps, duration_ms=req.duration_ms, log=log,
                     )
                     renderer = "html"
+                except (MediaCanceled, MediaCleanupError):
+                    raise
                 except Exception as exc:
                     if want == "html":
                         raise  # explicitly requested -> surface the failure
@@ -57,6 +65,7 @@ class CaptionCardProvider(Provider):
                     self._record_html_degradation(req, exc)
                     out = None  # adapter wall: fall through to drawtext
             if out is None:
+                check_canceled()
                 from ..media.card import caption_card  # zero-dependency fallback
 
                 out = caption_card(

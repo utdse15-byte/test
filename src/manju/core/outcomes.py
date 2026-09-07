@@ -243,4 +243,8 @@ def classify_exception(exc: BaseException) -> OperationOutcome:
     except ImportError:
         pass
 
+    from ..media.ffmpeg import MediaCanceled
+    if isinstance(exc, MediaCanceled):
+        return OperationOutcome.canceled(msg)
+
     return OperationOutcome.failed(msg)

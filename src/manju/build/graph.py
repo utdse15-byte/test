@@ -1688,6 +1688,8 @@ def _run_build_phases(
             )
             chain = fallback_chain(shot)
             canceled = False
+            remote_pending = False
+            from ..media.ffmpeg import MediaCanceled
             try:
                 takes = generate_with_fallback(req, chain)
                 exc: BaseException | None = None
@@ -1700,6 +1702,10 @@ def _run_build_phases(
                 # "stopped, not spent-on-nothing" and raises BuildCanceled at
                 # the next checkpoint rather than recording a failure.
                 takes, exc = None, e
+                canceled = True
+                remote_pending = True
+            except MediaCanceled as e:
+                takes, exc = list(e.completed_takes), None
                 canceled = True
             # Each take's provider-reported cost is validated BEFORE it joins
             # this shot's subtotal, so one bad figure cannot hide inside a sum
@@ -1721,14 +1727,15 @@ def _run_build_phases(
                         break
             return {"item": item, "shot": shot, "req": req, "chain": chain,
                     "takes": takes, "exc": exc, "actual_cost": actual,
-                    "cost_invalid": cost_invalid, "canceled": canceled}
+                    "cost_invalid": cost_invalid, "canceled": canceled,
+                    "remote_pending": remote_pending}
 
         def _commit_one(res: dict) -> None:
             """Serial, order-dependent commit for one generated shot — the exact
             side effects the pre-modes loop applied inline, unchanged."""
             item, shot, req, chain = res["item"], res["shot"], res["req"], res["chain"]
             takes, exc = res["takes"], res["exc"]
-            if res.get("canceled"):
+            if res.get("canceled") and not takes:
                 # goal: honest job cancellation — a ProviderCanceled stopped
                 # this shot's poll loop from waiting; it produced NO take, so
                 # there is nothing to commit, and it is NOT a failure (§8.1:
@@ -1818,7 +1825,7 @@ def _run_build_phases(
                     # This shot's own poll loop stopped waiting — raise now
                     # rather than waiting for the next iteration's pre-check.
                     # force=True: do not re-sample should_cancel() (P1-7).
-                    _cancel_check(f"生成:{item['shot']}", remote_pending=True,
+                    _cancel_check(f"生成:{item['shot']}", remote_pending=res.get("remote_pending", False),
                                   force=True)
             if serial_budget_skipped:
                 result.warnings.append(
@@ -1869,7 +1876,7 @@ def _run_build_phases(
                 # every already-committed result above is real (generated +
                 # cached), everything else was never submitted or never billed.
                 # force=True: do not re-sample should_cancel() (P1-7).
-                remote_pending = any(bool(r.get("canceled")) for r in done.values())
+                remote_pending = any(bool(r.get("remote_pending")) for r in done.values())
                 _cancel_check("生成(并发提交已停止)", remote_pending=remote_pending,
                               force=True)
             if tripped:
@@ -2747,7 +2754,17 @@ def _run_redo(project: Project, plan: _RedoPlan, *, bible, rules,
         # C25: cooperative cancel during cloud/ComfyUI poll waits.
         should_cancel=should_cancel,
     )
-    takes = generate_with_fallback(req, fallback_chain(shot))
+    from ..media.ffmpeg import MediaCanceled
+    try:
+        takes = generate_with_fallback(req, fallback_chain(shot))
+    except MediaCanceled as exc:
+        takes = list(exc.completed_takes)
+        if takes:
+            _record_local_runs(project, takes, {"redo": True, "canceled": True},
+                               {shot.id: plan.cost})
+            append_event(project.root, actor, "redo", {
+                "shot": shot.id, "takes": [t.name for t in takes], "canceled": True})
+        raise
     _record_local_runs(project, takes, {"redo": True}, {shot.id: plan.cost})
     append_event(project.root, actor, "redo", {"shot": shot.id, "takes": [t.name for t in takes]})
     return [t.name for t in takes]
@@ -3018,6 +3035,15 @@ def _redo_batch_locked(project: Project, mode: str, shots: list[str], *,
         except Exception as exc:  # ProviderFailure/NeedsHumanInput/MediaError/…
             # ProviderCanceled mid-poll: batch stops as canceled, not failed.
             from ..providers.base import ProviderCanceled
+            from ..media.ffmpeg import MediaCanceled
+            if isinstance(exc, MediaCanceled):
+                completed = [t.name for t in exc.completed_takes]
+                if completed:
+                    result.takes[sid] = completed
+                    result.ran.append(sid)
+                result.canceled = True
+                result.errors.append(f"已取消本地生成:{sid};已注册候选保留")
+                break
             if isinstance(exc, ProviderCanceled):
                 result.canceled = True
                 result.errors.append(

@@ -19,6 +19,8 @@ import os
 import re
 import shlex
 import shutil
+import signal
+import tempfile
 import subprocess
 import time
 import uuid
@@ -35,7 +37,7 @@ from ..core.yamlio import replace_with_retry
 _IS_WINDOWS = os.name == "nt"
 
 
-def _taskkill_tree(proc: "subprocess.Popen") -> None:
+def _taskkill_tree(proc: "subprocess.Popen") -> bool:
     """Windows cancel/timeout kill must take the whole TREE, and must do it
     while the direct child is still alive: Chocolatey installs ffmpeg as a
     SHIM that spawns the real encoder as a child — TerminateProcess on the
@@ -44,10 +46,11 @@ def _taskkill_tree(proc: "subprocess.Popen") -> None:
     tree from the live shim; killing the shim first would orphan the encoder
     beyond /T's reach, so call this BEFORE terminate()."""
     try:
-        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+        result = subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
                        capture_output=True, timeout=10, check=False)
+        return result.returncode == 0
     except Exception:
-        pass  # taskkill unavailable/hung — the direct kill still follows
+        return False  # caller still reaps the direct process and reports uncertainty
 
 FFMPEG = "ffmpeg"
 _STDERR_TAIL = 15
@@ -86,12 +89,25 @@ class MediaError(RuntimeError):
 
 
 class MediaCanceled(MediaError):
-    """``run_ffmpeg`` killed its own subprocess because a cancel check tripped
-    (goal: honest job cancellation) — distinguishable from every other
-    :class:`MediaError` (bad exit, timeout, missing binary) so a caller can
-    tell "the user canceled" from "ffmpeg actually failed". The process is
-    confirmed dead (SIGTERM, then SIGKILL after a grace period) before this
-    is raised — nothing is left running."""
+    """Local work stopped. Completed registered takes survive cancellation.
+
+    This exception makes no assertion about a remote task or its billing.
+    Unconfirmed local teardown raises MediaCleanupError instead.
+    """
+
+    def __init__(self, message: str, *, completed_takes=()):
+        super().__init__(message)
+        self.completed_takes = tuple(completed_takes)
+
+
+class MediaCleanupError(MediaError):
+    """Owned process teardown could not be confirmed; never a successful cancel."""
+
+
+def check_canceled(check: Callable[[], bool] | None = None) -> None:
+    check = check if check is not None else _CANCEL_CHECK.get()
+    if check is not None and check():
+        raise MediaCanceled("已取消:尚未开始下一项本地操作")
 
 
 @contextmanager
@@ -101,6 +117,9 @@ def cancel_scope(should_cancel: "Callable[[], bool] | None") -> Iterator[None]:
     ``with`` block. See the ``_CANCEL_CHECK`` module note for why this exists.
     ``should_cancel=None`` is a genuine no-op (the byte-identical default
     ``subprocess.run`` path stays in effect for every call inside)."""
+    if should_cancel is None:
+        yield
+        return
     token = _CANCEL_CHECK.set(should_cancel)
     try:
         yield
@@ -192,7 +211,7 @@ def _canceled_error(project: Any, step: str, subject: str | None, cmd: list[str]
                 step=step, subject=subject or "ffmpeg",
                 cause="用户取消,ffmpeg 子进程已终止",
                 evidence=_quote(cmd[:_ARGV_HEAD]),
-                hint="部分产物已作为内容寻址缓存保留,可复用(§3);重新构建会跳过已完成部分",
+                hint="已注册候选与已完成缓存保留;未完成的临时输出不会发布",
                 level="info", actor="engine"))
         except Exception:
             pass
@@ -232,55 +251,104 @@ def _run_ffmpeg_default(cmd: list[str], *, project: Any, subject: str | None, st
                            subject=subject, step=step, log_name=log_name)
 
 
+def _signal_local_group(proc: subprocess.Popen, sig: int) -> None:
+    # Only for children we create with start_new_session=True, never arbitrary PIDs.
+    if not _IS_WINDOWS:
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            pass
+
+
+def _stop_local_process(proc: subprocess.Popen) -> None:
+    """Bounded tree signalling and direct-child reaping, preserving failures."""
+    try:
+        tree_confirmed = True
+        if _IS_WINDOWS:
+            tree_confirmed = _taskkill_tree(proc)  # before killing a Windows shim
+        else:
+            _signal_local_group(proc, signal.SIGTERM)
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            proc.communicate(timeout=_CANCEL_GRACE_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate(timeout=_CANCEL_GRACE_S)
+        finally:
+            # The group may outlive its leader. Stop remaining group members too.
+            if not _IS_WINDOWS:
+                _signal_local_group(proc, getattr(signal, "SIGKILL", signal.SIGTERM))
+        if tree_confirmed is False or proc.returncode is None:
+            raise MediaCleanupError("本地进程退出状态未确认;不能报告取消成功")
+    except MediaCleanupError:
+        raise
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise MediaCleanupError("本地进程清理未确认;请检查仍在运行的任务") from exc
+
+
+def _output_tail(stream, limit: int = 65536) -> str:
+    stream.seek(0, os.SEEK_END)
+    stream.seek(max(0, stream.tell() - limit))
+    return stream.read().decode("utf-8", errors="replace")
+
+
+def _run_local_process(cmd: list[str], *, timeout: float | None = None,
+                       check: Callable[[], bool] | None = None,
+                       output_limit: int = 32 * 1024 * 1024) -> subprocess.CompletedProcess:
+    """Own one local process. No pipes, shell, unbounded waits or reader threads.
+
+    Log capture uses temporary files with a polled size limit. Bursts can exceed
+    the limit between polls; this is not a hard disk quota. POSIX children have
+    a private session. Windows uses the existing taskkill tree mechanism.
+    """
+    check = check if check is not None else _CANCEL_CHECK.get()
+    check_canceled(check)
+    with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
+        proc = subprocess.Popen(
+            cmd, stdout=stdout, stderr=stderr,
+            start_new_session=not _IS_WINDOWS,
+        )
+        start = time.monotonic()
+        try:
+            while True:
+                check_canceled(check)
+                if timeout is not None and time.monotonic() - start > timeout:
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                if any(os.fstat(f.fileno()).st_size > output_limit for f in (stdout, stderr)):
+                    raise MediaError("本地进程输出超过限制,已终止操作")
+                try:
+                    proc.wait(timeout=_CANCEL_POLL_S)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if any(os.fstat(f.fileno()).st_size > output_limit for f in (stdout, stderr)):
+                raise MediaError("本地进程输出超过限制,已终止操作")
+            return subprocess.CompletedProcess(
+                cmd, proc.returncode, _output_tail(stdout), _output_tail(stderr))
+        except BaseException:
+            _stop_local_process(proc)
+            raise
+
+
 def _run_ffmpeg_cancelable(cmd: list[str], *, project: Any, subject: str | None, step: str,
                            log_name: str, timeout: float | None,
                            check: Callable[[], bool]) -> None:
-    """Popen + short-interval poll loop (goal: honest job cancellation) — used
-    ONLY when a cancel check is active (explicit ``cancel_event`` or the
-    ambient :func:`cancel_scope`). A trip terminates the subprocess (SIGTERM,
-    then SIGKILL after a grace period) and raises :class:`MediaCanceled`
-    instead of blocking until ffmpeg exits on its own."""
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, encoding="utf-8", errors="replace")
+        proc = _run_local_process(cmd, timeout=timeout, check=check)
     except FileNotFoundError:
         raise _not_found_error(project, step, subject, cmd) from None
-    start = time.monotonic()
-    stderr = ""
-    while True:
-        try:
-            # Gate round 3: poll wait() — a bare WaitForSingleObject/waitpid
-            # with no pipe machinery. The old communicate(timeout=…) poll
-            # never yielded on the real Windows host (both cancel tests took
-            # the encode's FULL duration, twice, deterministically — the
-            # reader-thread machinery swallowed the poll interval), so the
-            # cancel check only ran when ffmpeg finished by itself. Pipes are
-            # drained ONCE after death; -loglevel error keeps stderr far
-            # below the pipe buffer while alive, and a pathologically spewing
-            # ffmpeg stalls itself until the overall timeout kill fires.
-            proc.wait(timeout=_CANCEL_POLL_S)
-            _stdout, stderr = proc.communicate()
-            break
-        except subprocess.TimeoutExpired:
-            if check():
-                if _IS_WINDOWS:
-                    _taskkill_tree(proc)  # BEFORE terminate — see its docstring
-                proc.terminate()
-                try:
-                    proc.communicate(timeout=_CANCEL_GRACE_S)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.communicate()
-                raise _canceled_error(project, step, subject, cmd) from None
-            if timeout is not None and (time.monotonic() - start) > timeout:
-                if _IS_WINDOWS:
-                    _taskkill_tree(proc)
-                proc.kill()
-                proc.communicate()
-                raise _timeout_error(project, step, subject, cmd, timeout) from None
+    except MediaCanceled:
+        raise _canceled_error(project, step, subject, cmd) from None
+    except subprocess.TimeoutExpired:
+        raise _timeout_error(project, step, subject, cmd, timeout) from None
+    except OSError as exc:
+        raise MediaError(f"本地媒体进程或日志读写失败: {exc}") from exc
     if proc.returncode != 0:
-        _raise_on_bad_exit(project, cmd, proc.returncode, stderr,
-                           subject=subject, step=step, log_name=log_name)
+        _raise_on_bad_exit(project, cmd, proc.returncode, proc.stderr,
+                          subject=subject, step=step, log_name=log_name)
 
 
 def run_ffmpeg(
@@ -308,7 +376,7 @@ def run_ffmpeg(
     extraction, thumbnails) or ``None`` to disable the cap outright.
 
     ``cancel_event`` (goal: honest job cancellation): a ``threading.Event``
-    (or anything with ``.is_set()``) checked every ~0.2s while ffmpeg runs —
+    (or anything with ``.is_set()``) checked before dispatch and every ~0.2s while ffmpeg runs —
     a trip terminates the subprocess and raises :class:`MediaCanceled`
     instead of blocking until it exits. When omitted, the AMBIENT check set
     by :func:`cancel_scope` (if any) is used instead. With NEITHER present —
