@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "manju"
-version = "0.2.0+r3.rebuilt"
+version = "0.2.0+r4.rebuilt"
 description = "Manju One — a deterministic build system for video (text is truth, media is append-only)"
 requires-python = ">=3.11"
 dependencies = [
@@ -55,6 +55,7 @@ where = ["src"]
 [tool.setuptools.package-data]
 "manju.presets" = ["data/*.yaml"]
 "manju.gui" = ["assets/*.ico", "assets/*.svg"]
+"manju.authoring" = ["data/*.json"]
 
 # Incremental static checking (task 13): the lint gate is the OBVIOUS-ERROR
 # subset only (syntax / undefined names / bug-prone patterns) — deliberately
@@ -77,3 +78,5 @@ testpaths = ["tests"]
 markers = [
     "ffmpeg: the whole module requires a real ffmpeg/ffprobe on PATH (deselect with -m 'not ffmpeg' for the fast dev loop)",
 ]
+
+# Offline evidence catalog. No model SDK or network dependency.
