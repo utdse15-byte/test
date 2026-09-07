@@ -12,6 +12,9 @@ review_js=root/'tools/workbench.review.js'
 if review_html.is_file() and review_js.is_file():
  template=template.replace('<!-- REVIEW_SECTION -->',review_html.read_text(encoding='utf-8'))
  script=script.replace('// REVIEW_SCRIPT',review_js.read_text(encoding='utf-8'))
+workspace_js=root/'tools/workbench.workspace.js'
+if workspace_js.is_file():
+ script=script.replace('// WORKSPACE_SCRIPT',workspace_js.read_text(encoding='utf-8'))
 # Do not allow JSON strings or program string literals to close a script tag.
 html=template.replace('__CATALOG__',catalog.replace('</','<\\/')).replace('__SCRIPT__',script.replace('</script','<\\/script')).replace('__RELEASE__',release)
 for path in [root/'tools/model_workbench.html',root/'src/manju/authoring/data/workbench.html']:

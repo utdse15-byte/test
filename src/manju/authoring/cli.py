@@ -124,3 +124,11 @@ def workbench_command(output: Path = typer.Option(..., '--output')):
         stream.write(data)
     _emit({'workbench': str(output), 'network_required': False,
            'note': '离线规划与文件交接，不生成商业模型视频。'})
+
+
+@app.command('workspace-verify')
+@_guard
+def workspace_verify_command(archive: Path):
+    """只读验证完整工作现场 ZIP；不解压、不恢复确认、不改影片工程。"""
+    from .workspace import verify_workspace
+    _emit(verify_workspace(archive))

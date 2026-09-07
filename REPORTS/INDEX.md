@@ -7,6 +7,7 @@ DECISIONS entry, and its commit. Nothing here is a fact source.
 
 | Report | Record |
 |---|---|
+| `continuation/R8.md` | Complete portable workspace, browser roundtrip and exact scope |
 | `research-dogfood-r2/VALIDATION_2026-09-06.md` | Final measured comparison, real-service/browser and media rehearsals, exact limits and unresolved gates |
 | `research-dogfood-r2/BASE_STATE_2026-08-15.md` / `BASE_HANDOFF_2026-08-15.md` | Complete unchanged R1 active notes, archived before R2 takeover |
 | `research-dogfood-r2/IMPLEMENTATION.md` | R2: first-row finishing fixes, story revision / in-flight draft protection, immutable exact-filename external asset maps |

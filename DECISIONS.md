@@ -4583,3 +4583,12 @@ behavior before the fix landed. Test files: `tests/test_trisurface_verdict_loop.
    composed browser/HTTP checks never stand in for real generated material,
    human approval, Windows App Dogfood or same-SHA cross-platform gates.
    `LAST_GREEN` is not advanced.
+
+## CONTINUATION-R8 (2026-09-07 UTC)
+
+Complete authoring workspaces are explicit portable checkpoints, not production
+inputs. A backup includes the closure of actual referenced media, the raw form
+(including incomplete text), the dated catalog and immutable review history.
+Restore validates first, requires confirmation, and resets current approvals.
+Existing project files and source media never change. ZIP_STORED deliberately
+bounds decompression risks and keeps browser restore free of third-party code.

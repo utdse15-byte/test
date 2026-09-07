@@ -157,7 +157,7 @@ def verify(root: Path, *, git: bool = False) -> dict:
     for key in ('stage', 'version', 'baseline', 'inherits', 'features', 'original_r3_r4_bytes_recovered', 'formal_windows_release'):
         if meta.get(key) != version.get(key):
             raise ValueError('Package and source version identity differ: ' + key)
-    if meta.get('stage') not in {'R3','R4','R5','R6','R7'}:
+    if meta.get('stage') not in {'R3','R4','R5','R6','R7','R8','R9','R10'}:
         raise ValueError('Unknown delivery stage')
     for key in ('git_head','git_tree','baseline'):
         if not isinstance(meta.get(key), str) or not COMMIT.fullmatch(meta[key]):

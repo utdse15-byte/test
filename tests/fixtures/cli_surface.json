@@ -402,6 +402,12 @@
       "output"
     ]
   },
+  "models workspace-verify": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "new": {
     "exists": true,
     "params": [

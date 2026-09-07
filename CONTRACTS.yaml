@@ -859,6 +859,22 @@ schemas:
 # ---------------------------------------------------------------------------
   # R7: explicitly registered offline model/review protocols. All remain experimental.
 
+  - id: manju.authoring-workspace/v1
+    kind: schema
+    owner: manju.authoring.workspace
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Offline checkpoint only; no approvals or project changes on restore.
+  - id: manju.workspace-manifest/v1
+    kind: schema
+    owner: manju.authoring.workspace
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Offline checkpoint only; no approvals or project changes on restore.
   - id: manju.model-request/v1
     kind: schema
     owner: manju.authoring.core:Request

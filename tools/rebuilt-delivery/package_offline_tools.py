@@ -13,7 +13,8 @@ def build(repo:Path,output:Path):
     status=subprocess.check_output(['git','status','--porcelain'],cwd=repo)
     if status.strip():raise ValueError('Commit the source first')
     version=json.loads((repo/'DELIVERY_VERSION.json').read_text())
-    if version['stage']!='R7':raise ValueError('This compact toolkit requires R7')
+    stage=version['stage']
+    if stage not in {'R7','R8','R9','R10'}:raise ValueError('This compact toolkit requires R7 or later')
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo).decode().strip()
     html=(repo/'tools/model_workbench.html').read_bytes()
     if html!=(repo/'src/manju/authoring/data/workbench.html').read_bytes():raise ValueError('Standalone and installed workbench differ')
@@ -63,8 +64,8 @@ SHA256SUMS.json：本包内部文件哈希，不是发布者数字签名。
       'OPEN_MODEL_WORKBENCH.html':html,
       'MODEL_CATALOG.json':(repo/'src/manju/authoring/data/catalog.json').read_bytes(),
       'EXAMPLE_REQUEST.json':(json.dumps(example,ensure_ascii=False,indent=2)+'\n').encode(),
-      'READ_ME_FIRST_ZH.md':intro.encode(),
-      'VERSION.json':(json.dumps({'stage':'R7','version':version['version'],'git_head':head,
+      'READ_ME_FIRST_ZH.md':intro.replace('R7',stage).encode(),
+      'VERSION.json':(json.dumps({'stage':stage,'version':version['version'],'git_head':head,
         'html_sha256':sha256(html).hexdigest(),'cumulative_features':version['features'],
         'full_native_application_included':False,'commercial_execution_connected':False,
         'original_r3_r4_bytes_recovered':False,'windows_double_click_certified':False},ensure_ascii=False,indent=2)+'\n').encode()}
@@ -74,12 +75,12 @@ SHA256SUMS.json：本包内部文件哈希，不是发布者数字签名。
     with tempfile.TemporaryDirectory(prefix='manju-compact-') as td:
         temp=Path(td)/'toolkit.zip'
         with zipfile.ZipFile(temp,'w',zipfile.ZIP_DEFLATED,compresslevel=9) as z:
-            for name,data in sorted(payload.items()):z.writestr('MANJU_R7_OFFLINE_TOOLS/'+name,data)
+            for name,data in sorted(payload.items()):z.writestr(f'MANJU_{stage}_OFFLINE_TOOLS/'+name,data)
         with zipfile.ZipFile(temp) as z:
             if z.testzip() is not None:raise ValueError('Compact ZIP CRC failed')
             z.extractall(Path(td)/'check')
         for name,data in payload.items():
-            if (Path(td)/'check/MANJU_R7_OFFLINE_TOOLS'/name).read_bytes()!=data:raise ValueError('Extracted payload differs')
+            if (Path(td)/f'check/MANJU_{stage}_OFFLINE_TOOLS'/name).read_bytes()!=data:raise ValueError('Extracted payload differs')
         with output.open('xb') as f:f.write(temp.read_bytes())
     return {'ok':True,'archive':str(output),'archive_sha256':sha256(output.read_bytes()).hexdigest(),
       'archive_bytes':output.stat().st_size,'members':len(payload),'git_head':head,
