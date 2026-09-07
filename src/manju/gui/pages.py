@@ -405,6 +405,9 @@ def nav_html(
         '<div class="pnav-tools">',
         _execution_status_html(),
         render_command_button(),
+        '<a class="mj-task-button mj-model-tools" href="/model-workbench" '
+        'target="_blank" rel="noopener noreferrer" '
+        'title="新模型适配、候选审片与定稿交接（不调用付费 API）">模型</a>',
         '<button type="button" id="mj-task-center-btn" class="mj-task-button" '
         'aria-haspopup="dialog" aria-controls="mj-task-center" '
         'aria-expanded="false" title="打开任务中心">'

@@ -857,6 +857,98 @@ schemas:
 # truth files, evidence envelopes, and machine surfaces. Excluded from the
 # ghost-row / literal checks (their ids are intentionally not schema ids).
 # ---------------------------------------------------------------------------
+  # R7: explicitly registered offline model/review protocols. All remain experimental.
+
+  - id: manju.model-request/v1
+    kind: schema
+    owner: manju.authoring.core:Request
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Versioned offline creative task. Preserve the existing v1 canonical hash; new revision metadata is kept outside this object.
+
+  - id: manju.model-catalog/v1
+    kind: schema
+    owner: manju.authoring.core:Catalog
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Dated vendor authoring claims, not executable provider capability or vendor acceptance.
+
+  - id: manju.model-plan/v1
+    kind: schema
+    owner: manju.authoring.core:plan
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Derived constraints and warnings. Never selects or executes a model.
+
+  - id: manju.model-approval/v1
+    kind: schema
+    owner: manju.authoring.core:Approval
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Local human declaration bound to request and catalog hashes. Not identity authentication, provider authorization or Picture Lock.
+
+  - id: manju.model-bundle/v1
+    kind: schema
+    owner: manju.authoring.core
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Original offline handoff layout, still used for draft handoffs. Legacy final declarations are readable but do not prove draft promotion.
+
+  - id: manju.model-bundle/v2
+    kind: schema
+    owner: manju.authoring.core
+    status: experimental
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: Final handoff with actual approved draft bytes and review proof. Reads v1 without upgrading its assurance; never downgrades v2 proof to a v1 final declaration.
+
+  - id: manju.project-authoring-import/v1
+    kind: schema
+    owner: manju.authoring.project_bridge
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Read-only project snapshot envelope with source-plan hash. File import is explicit, with no project write-back.
+
+  - id: manju.review-session/v1
+    kind: schema
+    owner: manju.review.core
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Draft-bound candidate inventory with content hashes and blind presentation order. No automatic winner.
+
+  - id: manju.review-decision/v1
+    kind: schema
+    owner: manju.review.core
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Append-only hash-linked local human review declaration. Not a digital signature, global revocation service or selection truth.
+
+  - id: manju.review-document/v1
+    kind: schema
+    owner: manju.review.core
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Portable session and decision history. Promotion requires actual reviewed file and unchanged creative intent.
+
 documents:
   - id: project.yaml
     kind: document

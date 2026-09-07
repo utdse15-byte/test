@@ -1,6 +1,6 @@
-# Manju R6 交接
+# Manju R7 交接
 
-先读 `PROJECT_STATE_2026-09-07_04-48-08.md` 与 `DELIVERY_VERSION.json`。
+先读 `PROJECT_STATE_2026-09-07_05-24-47.md` 与 `DELIVERY_VERSION.json`。
 
 本轮重建的基础是 R2 13a2ab1。R3/R4 原始ZIP未找回，不允许将重建称为字节级恢复。
 

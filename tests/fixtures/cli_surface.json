@@ -341,6 +341,67 @@
     "exists": true,
     "params": []
   },
+  "models approve": {
+    "exists": true,
+    "params": [
+      "mode",
+      "output",
+      "profile",
+      "request",
+      "reviewer"
+    ]
+  },
+  "models bundle": {
+    "exists": true,
+    "params": [
+      "approval",
+      "output",
+      "request"
+    ]
+  },
+  "models catalog": {
+    "exists": true,
+    "params": []
+  },
+  "models diff": {
+    "exists": true,
+    "params": [
+      "after",
+      "before"
+    ]
+  },
+  "models example": {
+    "exists": true,
+    "params": [
+      "output"
+    ]
+  },
+  "models from-shot": {
+    "exists": true,
+    "params": [
+      "output",
+      "project",
+      "shot_id"
+    ]
+  },
+  "models plan": {
+    "exists": true,
+    "params": [
+      "request"
+    ]
+  },
+  "models verify": {
+    "exists": true,
+    "params": [
+      "bundle"
+    ]
+  },
+  "models workbench": {
+    "exists": true,
+    "params": [
+      "output"
+    ]
+  },
   "new": {
     "exists": true,
     "params": [
@@ -528,6 +589,48 @@
   "repair": {
     "exists": true,
     "params": []
+  },
+  "review create": {
+    "exists": true,
+    "params": [
+      "candidate",
+      "output",
+      "request"
+    ]
+  },
+  "review decide": {
+    "exists": true,
+    "params": [
+      "candidate",
+      "file",
+      "notes",
+      "output",
+      "review",
+      "reviewer",
+      "verdict"
+    ]
+  },
+  "review promote": {
+    "exists": true,
+    "params": [
+      "candidate",
+      "file",
+      "output",
+      "review"
+    ]
+  },
+  "review report": {
+    "exists": true,
+    "params": [
+      "output",
+      "review"
+    ]
+  },
+  "review verify": {
+    "exists": true,
+    "params": [
+      "review"
+    ]
   },
   "rollback": {
     "exists": true,

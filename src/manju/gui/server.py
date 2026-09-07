@@ -737,6 +737,29 @@ class _Handler(BaseHTTPRequestHandler):
                     self._workspace_page()
                 else:
                     self._page()
+            elif path == "/model-workbench":
+                from ..authoring.server_page import render as render_model_workbench, HEADERS
+                self._send_text(render_model_workbench(self.server.project),
+                                "text/html; charset=utf-8", extra=HEADERS)
+            elif path == "/api/model-authoring/shot":
+                from ..authoring.project_bridge import from_shot
+                from ..authoring.core import AuthoringError
+                query = parse_qs(url.query)
+                ids = query.get("shot", [])
+                if self.server.project is None:
+                    self._send_error_json("先在影片工作台打开工程。", 404)
+                elif set(query) != {"shot"} or len(ids) != 1 or not is_safe_segment(ids[0]):
+                    self._send_error_json("请明确选择一个有效镜头。", 400)
+                elif ids[0] not in self.server.project.shot_ids():
+                    self._send_error_json("镜头不存在，未导出任务。", 404)
+                else:
+                    try:
+                        task = from_shot(self.server.project.root, ids[0])
+                    except (AuthoringError, ValueError, OSError) as exc:
+                        self._send_error_json("镜头任务暂不能导出：" + str(exc), 400)
+                    else:
+                        self._send_json(task, extra_headers={
+                            "Content-Disposition": 'attachment; filename="MANJU_SHOT.json"'})
             elif path == "/favicon.ico":
                 # One shipped mark for the browser tab and Windows shortcut.
                 # It remains local package data: no CDN, no external request.
