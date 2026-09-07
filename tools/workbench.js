@@ -137,4 +137,5 @@ try{const saved=localStorage.getItem(STORE);if(saved&&saved.length<=2*1024*1024)
 window.ManjuWorkbench={SHA256,normalizeRequest,normalizeCatalog,modeReport,options,canonical,hash,crc32,zipStore,brief,getRequest,state,roleNames:ROLE_NAMES,element,status,handled,inspectFile,download,jsonBytes,fillRequest,invalidate,persist,renderAssets,importRequest,catalog:()=>catalog};
 // REVIEW_SCRIPT
 // WORKSPACE_SCRIPT
+// RETURNS_SCRIPT
 })();

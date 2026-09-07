@@ -121,18 +121,21 @@ def _parse_fps(rate: str | None) -> float | None:
         return None
 
 
-def probe(path: Path, *, timeout: float | None = DEFAULT_PROBE_TIMEOUT_S) -> ProbeInfo:
+def probe(path: Path, *, timeout: float | None = DEFAULT_PROBE_TIMEOUT_S,
+          local_only: bool = False) -> ProbeInfo:
     """Full technical probe. Raises :class:`MediaError` if the file is
     unreadable, ffprobe emits no parseable JSON, or it exceeds ``timeout``
     seconds (#55: a corrupt file / network mount must not hang forever;
     ``None`` disables the cap)."""
     path = Path(path)
-    cached = _cache_get(path, "probe")
+    cache_kind = "probe_local" if local_only else "probe"
+    cached = _cache_get(path, cache_kind)
     if cached is not None:
         return ProbeInfo.model_validate(cached)
     cmd = [
         FFPROBE, "-v", "error", "-print_format", "json",
-        "-show_format", "-show_streams", str(path),
+        "-show_format", "-show_streams",
+        *(["-protocol_whitelist", "file,pipe"] if local_only else []), str(path),
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
@@ -178,7 +181,7 @@ def probe(path: Path, *, timeout: float | None = DEFAULT_PROBE_TIMEOUT_S) -> Pro
         fps=fps,
         has_audio=audio is not None,
     )
-    _cache_put(path, "probe", info.model_dump())
+    _cache_put(path, cache_kind, info.model_dump())
     return info
 
 

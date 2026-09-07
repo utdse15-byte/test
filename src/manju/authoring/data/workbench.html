@@ -40,6 +40,7 @@
 <div id="candidate-grid" class="candidate-grid"><div class="empty">请先添加实际视频。最多 8 个不同内容的候选。</div></div>
 <div class="actions"><button id="play-review">从头一起播放</button><button id="pause-review">全部暂停</button><button id="load-review-request">载入此场次的草稿任务</button></div>
 <p class="hint">一起播放不保证逐帧同步。默认静音；手动打开一个候选的声音时会静音其他候选。不能播放的编码请在本地播放器中检查，不应仅凭缩略图批准。</p>
+<details class="panel" id="return-section"><summary>返回视频是否符合任务规格？</summary><p class="hint">按当前上方任务检查实际视频，不改变审片场次。时长容差 100 毫秒，画幅误差容差 2%；已知 p 分辨率只查最低短边。2K / 4K 等含义不统一的标签保持未知。这些是本地排错规则，不是模型质量排名。</p><div class="actions"><button id="inspect-returns">按当前任务核对返回规格</button><button id="export-returns">重新核对并保存报告</button></div><div id="return-results"></div><p class="hint">浏览器只读取元数据，不能证明每一帧都能解码，也不验音频、旋转或非方形像素。CLI 加 <code>--decode</code> 可检查全部视频帧；仍不等于创作批准。</p></details>
 <div class="formrow">
 <div><h3>追加一条人工决定</h3><label class="field" for="review-candidate">评审哪一个候选？<select id="review-candidate"><option value="">请明确选择</option></select></label><label class="field" for="review-verdict">决定<select id="review-verdict"><option value="">请明确选择</option><option value="approve_draft">批准为定稿前的草稿</option><option value="revise">需要修改</option><option value="reject">拒绝此候选</option></select></label><label class="field" for="review-notes">看到了什么？为什么？<textarea id="review-notes" maxlength="6000" placeholder="写下具体观察，例如：人物一致，但末尾手指变形。"></textarea></label></div>
 <div><h3>确认与证据</h3><label class="field" for="review-human">审片人<input id="review-human" maxlength="120" autocomplete="off"></label><label class="field" for="review-score">提示词符合度（可不评分）<select id="review-score"><option value="">不评分</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></label><label class="checkline"><input id="review-confirmed" type="checkbox"><span>我已查看这个实际视频，确认以上决定。此声明不自动选片、不批准影片锁定。</span></label><button id="record-review" class="primary">核对文件并追加决定</button><p class="hint">旧决定不会被新决定抹去。若最新决定变为修改或拒绝，该记录中的候选不能再晋升。历史文件是当时的快照，并非联网撤销服务。</p></div>
@@ -54,7 +55,7 @@
 </style>
 
 <details class="panel"><summary>使用与保存说明</summary><p>本页面不依赖服务器或第三方脚本。草稿尝试保存在当前浏览器的本地存储中，但浏览器清理、隐私模式或 file:// 限制都可能让它失效；请把 JSON 或 ZIP 导出到自己的磁盘。恢复草稿不会恢复媒体字节，必须重新绑定文件。</p><p>从已有工程导入：<code>manju models from-shot 项目目录 镜头编号 --output shot-import.json</code>，然后在这里“导入任务 / 镜头”。原项目不被修改。</p><p>新适配包是独立伴随文件，不向旧 R2 provider-handoff 插入内容。它不生成视频，不连接商用接口，不改动原影片的选片或锁片状态。</p><p>JSON 数据只按文本显示；能力来源网址仅作证据记录，不由本页面自动访问。</p></details>
-<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">R8 · 能力核验 2026-09-06</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
+<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">R9 · 能力核验 2026-09-06</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
 </main>
 <script id="builtin-catalog" type="application/json">{
   "schema_id": "manju.model-catalog/v1",
@@ -1797,6 +1798,53 @@ $('import-workspace').addEventListener('change',handled(async event=>{
  }finally{workspaceBusy=false;event.target.value='';}
 }));
 window.ManjuWorkspace={normalizeWorkspace,requiredWorkspaceMedia,workspaceView,buildWorkspace,readWorkspace,storedZipMembers,applyWorkspace};
+
+// Technical observations are a snapshot, not creative approval or provider provenance.
+function returnChecks(request,candidate) {
+ request=normalizeRequest(request);candidate=candidateValue(candidate);
+ const expected=request.duration_s===null?null:request.duration_s*1000,actual=candidate.duration_ms;
+ const checks=[{id:'duration_ms',state:expected===null?'not_requested':actual===null?'unknown':Math.abs(actual-expected)<=100?'match':'mismatch',expected,actual}];
+ const match=/^([1-9][0-9]{0,3}):([1-9][0-9]{0,3})$/.exec(request.aspect_ratio||''),w=candidate.width,h=candidate.height;
+ let verdict;
+ if(!request.aspect_ratio||request.aspect_ratio==='adaptive')verdict='not_requested';
+ else if(!match||!w||!h)verdict='unknown';
+ else{const a=Number(match[1]),b=Number(match[2]);verdict=Math.abs(w*b-h*a)*100<=h*a*2?'match':'mismatch';}
+ checks.push({id:'dimension_ratio',state:verdict,expected:request.aspect_ratio,actual:w&&h?`${w}:${h}`:null});
+ const pixels=/^(360|480|540|720|768|1080|1440|2160)[pP]$/.exec(request.resolution||''),edge=pixels?Number(pixels[1]):null,actualEdge=w&&h?Math.min(w,h):null;
+ verdict=!request.resolution?'not_requested':edge===null||actualEdge===null?'unknown':actualEdge>=edge?'match':'mismatch';
+ checks.push({id:'minimum_short_edge_px',state:verdict,expected:edge,actual:actualEdge});return checks;
+}
+async function returnReport(request,candidates) {
+ request=normalizeRequest(request);candidates=candidates.map(candidateValue);
+ require(candidates.length>=1&&candidates.length<=12&&new Set(candidates.map(c=>c.sha256)).size===candidates.length,'请核对 1 至 12 个不同内容的视频');
+ const items=candidates.map(candidate=>{const checks=returnChecks(request,candidate),states=new Set(checks.map(c=>c.state));return {candidate,checks,status:states.has('mismatch')||states.has('unknown')?'needs_attention':states.size===1&&states.has('not_requested')?'not_requested':'metadata_matches_requested_checks',full_video_decode:'not_checked'};});
+ const body={schema_id:'manju.return-preflight/v1',request,request_sha256:await hash(request),policy:{duration_tolerance_ms:100,aspect_tolerance_percent:2,resolution_policy:'known_p_labels_minimum_short_edge'},items,automatic_approval:false,automatic_selection:false,picture_lock_authorized:false,provider_origin_verified:false,creative_quality_evaluated:false,audio_evaluated:false,geometry_note:'Dimension checks use reported pixel dimensions; SAR, rotation and crop are not certified.'};
+ return {...body,report_sha256:await hash(body)};
+}
+async function inspectBoundReturns() {
+ require(!state.busy&&!reviewState.busy,'素材仍在处理中');
+ const request=getRequest(),requestIdentity=await hash(request),revision=reviewState.revision,cs=reviewState.document?reviewState.document.session.candidates:reviewState.pending;
+ require(cs.length,'先添加实际候选视频');reviewState.busy=true;
+ try{
+  const candidates=[];
+  for(const c of cs){const found=reviewState.files.get(c.sha256);require(found,'请重新绑定原视频：'+c.filename);status('正在核对返回规格：'+c.filename);
+   const entry=await inspectFile(found.file);require(entry.sha256===c.sha256&&entry.file.size===c.bytes,'候选内容已经改变');candidates.push(await measuredCandidate(found.file,entry));}
+  require(revision===reviewState.revision&&await hash(getRequest())===requestIdentity,'任务或候选在检查期间改变，旧结果没有导出');
+  return await returnReport(request,candidates);
+ }finally{reviewState.busy=false;}
+}
+function showReturnReport(report) {
+ const root=$('return-results');root.replaceChildren();
+ root.append(element('p',`只读检查快照 · 镜头 ${report.request.shot_id} · 任务 ${report.request_sha256.slice(0,12)}`,'hint'));
+ const labels={duration_ms:'时长（毫秒）',dimension_ratio:'像素画幅',minimum_short_edge_px:'最低短边（像素）'},states={match:'符合本地规格检查',mismatch:'需要处理',unknown:'尚不能判断',not_requested:'未指定 / 不适用'};
+ report.items.forEach((item,i)=>{const box=element('div',undefined,'option');box.append(element('h3','返回候选 '+(i+1)),element('code',item.candidate.sha256));
+  item.checks.forEach(c=>box.append(element('p',`${labels[c.id]}：${states[c.state]}。目标 ${c.expected??'未指定'}，实测 ${c.actual??'未知'}`,c.state==='mismatch'?'reason':c.state==='unknown'?'notice':'hint')));
+  root.append(box);});
+ root.append(element('p','没有评价内容、声音或供应商来源，没有自动批准或选片。导出时会重新读取实际文件。','hint'));
+}
+$('inspect-returns').addEventListener('click',handled(async()=>{const r=await inspectBoundReturns();showReturnReport(r);status('返回规格检查完成。这是技术观察，不代表内容合格。');}));
+$('export-returns').addEventListener('click',handled(async()=>{const r=await inspectBoundReturns();showReturnReport(r);download(new Blob([jsonBytes(r)],{type:'application/json'}),'MANJU_RETURN_'+r.report_sha256.slice(0,12)+'.json');status('已触发返回规格报告下载。请自行确认保存；原视频和人工决定未被改动。');}));
+window.ManjuReturns={returnChecks,returnReport,inspectBoundReturns};
 
 })();
 </script>

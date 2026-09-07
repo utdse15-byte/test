@@ -4592,3 +4592,11 @@ inputs. A backup includes the closure of actual referenced media, the raw form
 Restore validates first, requires confirmation, and resets current approvals.
 Existing project files and source media never change. ZIP_STORED deliberately
 bounds decompression risks and keeps browser restore free of third-party code.
+
+## CONTINUATION-R9 (2026-09-07 UTC)
+
+Returned video preflight is an observation, not a verdict. Duration and encoded
+pixel checks use explicit local tolerances; ambiguous resolution labels remain
+unknown. Optional full video decode uses the existing media process owner and
+file/pipe-only input. No implicit provider origin claim, take selection, source
+edit or payment authorization follows from a technical match.

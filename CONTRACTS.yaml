@@ -875,6 +875,14 @@ schemas:
     read_older: false
     write_older: false
     notes: Offline checkpoint only; no approvals or project changes on restore.
+  - id: manju.return-preflight/v1
+    kind: schema
+    owner: manju.authoring.returns
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Read-only technical return observations; never quality approval or provider provenance.
   - id: manju.model-request/v1
     kind: schema
     owner: manju.authoring.core:Request

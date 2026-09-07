@@ -132,3 +132,13 @@ def workspace_verify_command(archive: Path):
     """只读验证完整工作现场 ZIP；不解压、不恢复确认、不改影片工程。"""
     from .workspace import verify_workspace
     _emit(verify_workspace(archive))
+
+
+@app.command('inspect-return')
+@_guard
+def inspect_return_command(request: Path, candidate: list[Path] = typer.Option(..., '--candidate'),
+                           decode: bool = typer.Option(False, '--decode'),
+                           output: Optional[Path] = typer.Option(None, '--output')):
+    """只读核对返回视频的时长、画幅和最低短边；不打画质分、不选片。"""
+    from .returns import inspect_files
+    _emit(inspect_files(Request.model_validate(load_json(request)), candidate, decode=decode), output)

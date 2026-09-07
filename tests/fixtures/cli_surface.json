@@ -384,6 +384,13 @@
       "shot_id"
     ]
   },
+  "models inspect-return": {
+    "exists": true,
+    "params": [
+      "candidate",
+      "request"
+    ]
+  },
   "models plan": {
     "exists": true,
     "params": [

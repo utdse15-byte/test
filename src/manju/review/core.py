@@ -133,7 +133,7 @@ def create_session(request: Request, candidates: list[Candidate], *, nonce: str 
     return ReviewDocument(session=Session.model_validate(body))
 
 
-def candidate_from_file(path: Path, *, probe: bool = True) -> Candidate:
+def candidate_from_file(path: Path, *, probe: bool = True, local_only: bool = False) -> Candidate:
     path = path.resolve()
     if not path.is_file() or path.suffix.lower() not in VIDEO_EXTS:
         raise AuthoringError('select an existing local video file')
@@ -145,7 +145,7 @@ def candidate_from_file(path: Path, *, probe: bool = True) -> Candidate:
         from ..media.probe import probe as read_probe
         from ..media.ffmpeg import MediaError
         try:
-            info = read_probe(path, timeout=15.0)
+            info = read_probe(path, timeout=15.0, **({"local_only": True} if local_only else {}))
         except MediaError as exc:
             raise AuthoringError(f'candidate metadata probe failed: {exc}') from exc
         if not info.width or not info.height or not info.duration_ms or info.duration_ms < 1:
