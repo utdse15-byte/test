@@ -12,6 +12,7 @@
 <body>
 <header><div class="top"><div><div class="brand">MANJU ONE · LOCAL STUDIO</div><h1>把一个镜头，交代清楚。</h1></div><span class="pill">离线运行 · 文件不上传</span></div><p>先确定要做什么，再核对型号、绑定素材、记录人工决定。这里不调用生成 API，不自动选片。</p></header>
 <main>
+<!-- STUDIO_SECTION -->
 <div class="toolbar"><label class="filebtn" for="import-request">导入任务 / 镜头<input class="hidden" id="import-request" type="file" accept=".json,application/json"></label><label class="filebtn" for="import-catalog">导入能力档<input class="hidden" id="import-catalog" type="file" accept=".json,application/json"></label><button id="export-catalog">保存能力档</button><button id="open-review">审片与定稿 ↓</button><span class="grow"></span><button id="reset" class="quiet danger">清空当前草稿</button></div>
 <section id="catalog-preview" class="panel" hidden><h2>能力档变更预览</h2><p id="catalog-summary"></p><p>这只是带来源声明的本地比较，不联网验证、不自动应用，也不会授权商业生成。可先在顶部保存旧能力档。</p><details><summary>查看字段差异、任务影响和复核窗口</summary><pre id="catalog-diff" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto"></pre></details><label><input id="catalog-confirmed" type="checkbox">我已查看变化，同意替换能力档并清除当前型号选择与确认</label><div class="toolbar"><button id="catalog-refresh">重新预览当前任务</button><button id="apply-catalog" disabled>应用已预览能力档</button><button id="catalog-revert" disabled>预览恢复上一能力档</button><button id="catalog-save-review">下载比较记录</button></div></section>
 

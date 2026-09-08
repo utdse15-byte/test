@@ -435,6 +435,12 @@
       "archive"
     ]
   },
+  "models studio-verify": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "models verify": {
     "exists": true,
     "params": [

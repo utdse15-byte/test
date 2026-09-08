@@ -1,6 +1,6 @@
 {
-  "stage": "R12",
-  "version": "0.2.0+r12",
+  "stage": "R13",
+  "version": "0.2.0+r13",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -12,7 +12,8 @@
     "R8",
     "R9",
     "R10",
-    "R11"
+    "R11",
+    "R12"
   ],
   "features": {
     "R3": [
@@ -80,12 +81,19 @@
       "独立导演材料ZIP：完整运动底片、原尺寸SDR帧、同画幅目标PNG与逐时刻意图",
       "目标PNG可高于原片像素且字节不缩小，重新打开独立核验并复测源视频元数据",
       "保留旧v1任务、工作现场和返工协议；不自动生成、选片、付款或修改影片工程"
+    ],
+    "R13": [
+      "个人创作入口直达镜头、审片、返工与导演工作区，默认质量优先不降档",
+      "三工作区原始草稿与实际媒体统一总备份，共用素材按内容去重，旧单区协议不变",
+      "恢复前核验真实文件与视频/PNG元数据，展示影响并拒绝过时预览，确认状态全部清除",
+      "下载触发与本机文件核验分开，部分JSON导出不清除总备份提醒",
+      "修复过时STATE入口并增加最新快照守卫，严格总备份只读CLI核验"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
   "reconstruction": true,
   "formal_windows_release": false,
   "commercial_api_executed": false,
-  "prior_verified_stage": "R11",
-  "prior_archive_sha256": "beb6d09fe9b9c7bde47da5d8bfb611413871758736f4c5a563a57912e92cb52b"
+  "prior_verified_stage": "R12",
+  "prior_archive_sha256": "9edbc097c2362f44f12eb6aa749280f2f73ddaadf0b9c3f33635dc16c2977529"
 }

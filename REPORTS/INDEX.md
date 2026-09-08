@@ -123,3 +123,9 @@ reporting window stays visible; the era table keeps their record intact.
 
 | continuation/R10.md | R10：完整现场、返回核对与能力变更审查的累计验收 | 修复候选，非Windows发布绿灯 |
 | continuation/R10_RESEARCH.md | 官方型号资料核验与本地适配决定 | 不含商业生成调用 |
+| continuation/R11_X_RESEARCH.md | 已有R11线索与局部返工适配记录 | 历史研究，非R13新核验 |
+| continuation/R11_VALIDATION.md | 已有R11测试与未关闭门 | 历史报告保持原样 |
+| continuation/R12_X_RESEARCH.md | 已有R12质量名单与导演材料研究 | R13不重新排名 |
+| continuation/R12_VALIDATION.md | 已有R12专项验收及边界 | 历史报告保持原样 |
+| continuation/R13_PROJECT_REVIEW.md | 个人创作台、三工作区总备份、下载回读与最新接管入口 | 真实源码梳理及本轮落实 |
+| continuation/R13_VALIDATION.md | 632点同进程回归、独立安装与真媒体演练、继承保护 | 修复候选，非Windows正式绿灯 |

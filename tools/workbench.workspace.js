@@ -61,12 +61,13 @@ async function buildWorkspace() {
  return {document:doc,blob:zipStore(entries)};
 }
 async function storedZipMembers(blob,profile='workspace') {
- require(['workspace','repair','director'].includes(profile),'未知 ZIP 配置');
+ require(['workspace','repair','director','studio'].includes(profile),'未知 ZIP 配置');
  require(blob&&blob.size>=22&&blob.size<=MAX_TOTAL+4*1024*1024,'工作现场 ZIP 为空或超过大小上限');
  const end=new DataView(await blob.slice(blob.size-22).arrayBuffer());
  require(end.getUint32(0,true)===0x06054b50&&end.getUint16(4,true)===0&&end.getUint16(6,true)===0&&end.getUint16(20,true)===0,'只读取本工具导出的无注释 ZIP');
+ const memberLimit=profile==='studio'?136:128;
  const count=end.getUint16(10,true),length=end.getUint32(12,true),start=end.getUint32(16,true);
- require(count>=2&&count<=128&&count===end.getUint16(8,true)&&length<=128*286&&start+length===blob.size-22,'ZIP 中央目录无效');
+ require(count>=2&&count<=memberLimit&&count===end.getUint16(8,true)&&length<=memberLimit*286&&start+length===blob.size-22,'ZIP 中央目录无效');
  const bytes=new Uint8Array(await blob.slice(start,start+length).arrayBuffer()),view=new DataView(bytes.buffer),decoder=new TextDecoder('utf-8',{fatal:true});
  const entries=new Map();let cursor=0,localEnd=0,total=0;
  for(let i=0;i<count;i++){
@@ -74,7 +75,7 @@ async function storedZipMembers(blob,profile='workspace') {
   const flags=view.getUint16(cursor+8,true),method=view.getUint16(cursor+10,true),crc=view.getUint32(cursor+16,true),packed=view.getUint32(cursor+20,true),size=view.getUint32(cursor+24,true),n=view.getUint16(cursor+28,true),extra=view.getUint16(cursor+30,true),comment=view.getUint16(cursor+32,true),offset=view.getUint32(cursor+42,true);
   require(n>0&&n<=240&&cursor+46+n<=length&&!extra&&!comment&&view.getUint16(cursor+34,true)===0,'ZIP 路径或额外字段无效');
   const name=decoder.decode(bytes.subarray(cursor+46,cursor+46+n));safePath(name);
-  require(profile==='workspace'?(name==='WORKSPACE.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):(['PLAN.json','BRIEF.md','MANIFEST.json'].includes(name)||/^source\/[a-f0-9]{64}\.(mp4|mov|webm|mkv)$/.test(name)||(profile==='director'&&/^(frames|guides)\/[a-f0-9]{64}\.png$/.test(name))),'ZIP 包含未允许的路径');
+  require(profile==='studio'?(name==='STUDIO.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):profile==='workspace'?(name==='WORKSPACE.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):(['PLAN.json','BRIEF.md','MANIFEST.json'].includes(name)||/^source\/[a-f0-9]{64}\.(mp4|mov|webm|mkv)$/.test(name)||(profile==='director'&&/^(frames|guides)\/[a-f0-9]{64}\.png$/.test(name))),'ZIP 包含未允许的路径');
   require(!entries.has(name)&&!(flags&~0x800)&&method===0&&packed===size&&size>0&&size<=(name.endsWith('.json')?2*1024*1024:MAX_FILE),'ZIP 重复、压缩、加密或大小不符合工作现场格式');
   require((view.getUint32(cursor+38,true)>>>16&0xf000)!==0xa000,'不接受链接');
   require(offset===localEnd&&offset+30+n+size<=start,'ZIP 数据重叠、缺口或越界');

@@ -1064,6 +1064,24 @@ schemas:
     write_older: false
     notes: Offline shortlist-filtered capability paths and exclusions. No automatic selection or downgrade; does not reconfigure native placeholder generation.
 
+  - id: manju.studio-session/v1
+    kind: schema
+    owner: manju.authoring.studio:Studio
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Whole-studio raw checkpoint embedding unchanged Workspace/v1 with repair/director drafts and unique media. Restore clears confirmations and enables quality filtering, never execution.
+
+  - id: manju.studio-manifest/v1
+    kind: schema
+    owner: manju.authoring.studio:verify_studio
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Closed bounded stored ZIP inventory, not a signature. Python hashes and checks PNG structure; browser recovery also probes video metadata and decodes PNGs.
+
 documents:
   - id: project.yaml
     kind: document

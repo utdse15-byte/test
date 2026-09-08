@@ -14,6 +14,7 @@ const MODE_KEYS=['id','task','roles','min_total_assets','durations','duration_ra
 const encoder=new TextEncoder(), MAX_FILE=128*1024*1024,MAX_TOTAL=512*1024*1024,STORE='manju.model-workbench.draft.v1';
 const identifier=/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/,hashPattern=/^[a-f0-9]{64}$/;
 let catalog=JSON.parse($('builtin-catalog').textContent);
+let activeUIOperations=0;
 const state={assets:[],files:new Map(),selected:null,plan:null,revision:0,dirty:false,busy:false,generation:0,stage:'draft',draftHash:null,sourceContext:null};
 function element(tag,text,cls){const e=document.createElement(tag);if(text!==undefined&&text!==null)e.textContent=String(text);if(cls)e.className=cls;return e;}
 function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
@@ -136,7 +137,7 @@ function strictJSON(text){
 async function parseFile(file){require(file&&file.size<=2*1024*1024,'JSON 最大 2 MiB');return strictJSON(await file.text());}
 async function importRequest(file){let value=await parseFile(file),context=null;if(value.schema_id==='manju.project-authoring-import/v1'){require(await hash(value.source_plan)===value.source_plan_sha256,'原项目上下文哈希不符');context={source_plan:value.source_plan,source_plan_sha256:value.source_plan_sha256,warnings:value.warnings||[]};value=value.request;}const request=normalizeRequest(value);state.generation++;state.files=new Map([...state.files].filter(([h])=>request.assets.some(a=>a.sha256===h)));state.sourceContext=context;fillRequest(request);showContext();invalidate();status('已导入任务。媒体字节未写入草稿，请重新选择本地文件绑定；原工程没有被修改。');}
 function showContext(){$('source-details').hidden=!state.sourceContext;$('source-context').textContent=state.sourceContext?JSON.stringify(state.sourceContext,null,2):'';}
-function handled(fn){return async(...args)=>{try{await fn(...args);}catch(e){status(e.message||String(e),true);}};}
+function handled(fn){return async(...args)=>{activeUIOperations++;try{await fn(...args);}catch(e){status(e.message||String(e),true);}finally{activeUIOperations--;window.ManjuStudio?.changed();}};}
 for(const id of ['shot-id','task','prompt','duration','resolution','ratio','preserve','change'])$(id).addEventListener('input',invalidate);
 $('reviewer').addEventListener('input',()=>{$('human-confirmed').checked=false;persist();});
 $('check-plan').addEventListener('click',handled(renderPlan));$('asset-files').addEventListener('change',handled(e=>addFiles([...e.target.files])));
@@ -157,4 +158,5 @@ window.ManjuWorkbench={SHA256,normalizeRequest,normalizeCatalog,modeReport,optio
 // CATALOG_SCRIPT
 // REPAIR_SCRIPT
 // DIRECTOR_SCRIPT
+// STUDIO_SCRIPT
 })();

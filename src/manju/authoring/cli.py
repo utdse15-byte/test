@@ -216,3 +216,11 @@ def director_verify_command(archive: Path):
     """只读核验运动底片、原帧和目标图；不生成、不上传、不自动批准。"""
     from .director import verify_director_bundle
     _emit(verify_director_bundle(archive))
+
+
+@app.command('studio-verify')
+@_guard
+def studio_verify_command(archive: Path):
+    """只读核验三个工作区总备份，不解压、不恢复批准或执行生成。"""
+    from .studio import verify_studio
+    _emit(verify_studio(archive))

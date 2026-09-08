@@ -4614,3 +4614,22 @@ seven other inherited profiles remain byte-equivalent after normalization.
 Untrusted JSON has a strict duplicate-key boundary. Technical report text wraps
 rather than hiding content on narrow screens. Publishing owns only exclusively
 created files; failure cannot remove another producer's existing download.
+
+## CONTINUATION-R13 (2026-09-08 UTC)
+
+Whole-studio checkpoints compose, rather than replace, the existing Workspace,
+Repair and Director meanings. Raw unfinished forms are saved without pretending
+that they meet execution constraints. Referenced media is included exactly once
+by content identity; original pixels and bytes are never traded for smaller files.
+A studio checkpoint is not a full native movie-project backup or an execution request.
+
+A download trigger is not evidence of durable storage. Read-back verification of a
+chosen local archive is separate from restore, and the cross-area dirty fingerprint
+cannot be cleared by a partial JSON export. Restore previews validate first, reject
+concurrent edits or unfinished asynchronous operations, and require explicit consent.
+Current approvals and model selection are cleared; quality-only is enabled again.
+
+The personal entry points STATE.md and FINAL_HANDOFF.md must refer to the newest
+immutable PROJECT_STATE snapshot. Old snapshots, task files, quality/catalog bytes,
+CLI entries and LAST_GREEN remain intact. Real download files and separate restore
+receipts remain mandatory; selected regression success is not Windows release proof.

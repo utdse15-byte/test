@@ -1,9 +1,9 @@
-# Manju R7 交接
+# Manju R13 交接
 
-先读 `PROJECT_STATE_2026-09-07_05-24-47.md` 与 `DELIVERY_VERSION.json`。
+先完整阅读 `PROJECT_STATE_2026-09-08_13-51-38.md` 与 `DELIVERY_VERSION.json`。R13代码与选定回归、独立安装和真媒体演练完成；最终以实际ZIP与独立恢复收据为交付依据。
 
-本轮重建的基础是 R2 13a2ab1。R3/R4 原始ZIP未找回，不允许将重建称为字节级恢复。
+R3/R4为功能重建，不是原丢失ZIP字节恢复；R13继承实际R12。个人创作首页、三个区统一总备份、选回本地文件核验与显式恢复已实现。原单区v1格式、十二个能力档和质量名单保持。
 
-包内 START_HERE.md 说明使用方式。源码、wheel、Git历史和本轮证据独立封装；不覆盖用户正在使用的安装或影片项目。
+使用入口在 `tools/delivery/QUICKSTART_ZH.md`，范围和限制见 `REPORTS/continuation/R13_PROJECT_REVIEW.md` 与 `REPORTS/continuation/R13_VALIDATION.md`。
 
-Windows实机和真实商用生成仍未验证。精确验收看 REPORTS/rebuilt-delivery 与包内 EVIDENCE。
+旧状态、任务与LAST_GREEN不改写；Windows实机与商业生成仍未通过正式验收。总备份不是完整影片工程备份。
