@@ -138,10 +138,15 @@ def workspace_verify_command(archive: Path):
 @_guard
 def inspect_return_command(request: Path, candidate: list[Path] = typer.Option(..., '--candidate'),
                            decode: bool = typer.Option(False, '--decode'),
+                           pixel_width: Optional[int] = typer.Option(None, '--pixel-width'),
+                           pixel_height: Optional[int] = typer.Option(None, '--pixel-height'),
                            output: Optional[Path] = typer.Option(None, '--output')):
     """只读核对返回视频的时长、画幅和最低短边；不打画质分、不选片。"""
     from .returns import inspect_files
-    _emit(inspect_files(Request.model_validate(load_json(request)), candidate, decode=decode), output)
+    if (pixel_width is None) != (pixel_height is None):
+        raise AuthoringError('provide both --pixel-width and --pixel-height')
+    pixels = (pixel_width, pixel_height) if pixel_width is not None else None
+    _emit(inspect_files(Request.model_validate(load_json(request)), candidate, decode=decode, expected_pixels=pixels), output)
 
 
 @app.command('catalog-review')
@@ -156,3 +161,38 @@ def catalog_review_command(before: Path, after: Path,
     _emit(review_catalog(load_catalog(before), load_catalog(after),
           Request.model_validate(load_json(request)) if request else None,
           today=date.fromisoformat(on) if on else None), output)
+
+
+@app.command('repair-create')
+@_guard
+def repair_create_command(request: Path, source: Path,
+                          start_ms: int = typer.Option(..., '--start-ms'),
+                          end_ms: int = typer.Option(..., '--end-ms'),
+                          preserve: list[str] = typer.Option(..., '--preserve'),
+                          change: list[str] = typer.Option(..., '--change'),
+                          requested_by: str = typer.Option(..., '--requested-by'),
+                          human_confirmed: bool = typer.Option(False, '--human-confirmed'),
+                          before_ms: int = typer.Option(500, '--before-ms'),
+                          after_ms: int = typer.Option(500, '--after-ms'),
+                          audio_policy: str = typer.Option('preserve_original', '--audio-policy'),
+                          output: Path = typer.Option(..., '--output')):
+    """保存包含完整原片的局部返工ZIP；不剪切、不生成、不改原任务。"""
+    from .repair import create_plan, write_repair_bundle
+    from ..review.core import candidate_from_file
+    if source.is_symlink():
+        raise AuthoringError('select a regular source file, not a link')
+    req = Request.model_validate(load_json(request))
+    candidate = candidate_from_file(source, local_only=True)
+    plan = create_plan(req, candidate, start_ms=start_ms, end_ms=end_ms,
+                       preserve=preserve, change=change, requested_by=requested_by,
+                       human_confirmed=human_confirmed, context_before_ms=before_ms,
+                       context_after_ms=after_ms, audio_policy=audio_policy)
+    _emit(write_repair_bundle(plan, source, output))
+
+
+@app.command('repair-verify')
+@_guard
+def repair_verify_command(archive: Path):
+    """只读核验返工范围、实际原片与文件清单，不解压或批准作品。"""
+    from .repair import verify_repair_bundle
+    _emit(verify_repair_bundle(archive))

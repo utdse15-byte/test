@@ -20,7 +20,7 @@ def request(**kw):
 
 
 def test_new_profiles_do_not_silently_rewrite_legacy():
-    old,new=load_catalog(OLD),load_catalog()
+    old,new=load_catalog(OLD),load_catalog(REPO/'src/manju/authoring/data/catalog_r10.json')
     lookup={p.id:p for p in new.profiles}
     assert all(digest(p)==digest(lookup[p.id]) for p in old.profiles)
     assert set(lookup)-{p.id for p in old.profiles}=={'runway-gen-4-5-web'}

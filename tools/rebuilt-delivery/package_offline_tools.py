@@ -14,7 +14,7 @@ def build(repo:Path,output:Path):
     if status.strip():raise ValueError('Commit the source first')
     version=json.loads((repo/'DELIVERY_VERSION.json').read_text())
     stage=version['stage']
-    if stage not in {'R7','R8','R9','R10'}:raise ValueError('This compact toolkit requires R7 or later')
+    if stage not in {'R7','R8','R9','R10','R11'}:raise ValueError('This compact toolkit requires R7 or later')
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo).decode().strip()
     html=(repo/'tools/model_workbench.html').read_bytes()
     if html!=(repo/'src/manju/authoring/data/workbench.html').read_bytes():raise ValueError('Standalone and installed workbench differ')
@@ -42,6 +42,9 @@ def build(repo:Path,output:Path):
 
 R9 增加返回视频规格检查：时长、画幅与本地最低短边。未知规格不当作通过；浏览器检查不等于完整视频解码、画质合格或人工批准。
 R10 导入能力档后先展示字段差异、当前镜头影响和证据复核窗口，确认后才替换。更换任务后必须重新预览。可预览恢复上一档。已有 Omni Flash 与新 Gen-4.5 仍仅为离线作者档，不接通商业服务。
+
+R11 增加独立局部返工区：选择实际原片，明确毫秒范围、保留项和修改项，再导出含完整原片的返工 ZIP。新窗口可重新打开并核验，原片不剪切、不上传，不自动生成或选片。返工区不包含在旧“完整工作现场 ZIP”内，必须单独保存。
+R11 的明确像素尺寸检查可正确区分标称720p与实际1584×672等画幅。新增Seedance2.5 BytePlus LAS作者档，其他平台规格不会套用。本地资源上限与供应商限制分别成立。
 
 ## 体积与边界
 

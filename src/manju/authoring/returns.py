@@ -76,7 +76,8 @@ def return_report(request: Request, candidates: list[Candidate], *,
     return {**body,'report_sha256':digest(body)}
 
 
-def inspect_files(request: Request, paths: list[Path], *, decode: bool = False) -> dict:
+def inspect_files(request: Request, paths: list[Path], *, decode: bool = False,
+                  expected_pixels: tuple[int, int] | None = None) -> dict:
     """Local protocols only; full decode is explicit, bounded and writes no video."""
     if not 1 <= len(paths) <= 12:
         raise AuthoringError('select 1..12 local candidate videos')
@@ -96,4 +97,27 @@ def inspect_files(request: Request, paths: list[Path], *, decode: bool = False) 
         if file_digest(path)!=candidate.sha256 or path.stat().st_size!=candidate.bytes:
             raise AuthoringError('returned candidate changed during inspection')
         candidates.append(candidate)
-    return return_report(request,candidates,decoded=decoded)
+    return return_report(request,candidates,decoded=decoded) if expected_pixels is None else raster_report(request,candidates,expected_pixels,decoded=decoded)
+
+
+def raster_report(request: Request, candidates: list[Candidate], expected_pixels: tuple[int, int], *,
+                  decoded: set[str] | None = None) -> dict:
+    """Explicit dimensions, not guesses from vendor labels. Preserve legacy v1 reports."""
+    if (not isinstance(expected_pixels, (tuple, list)) or len(expected_pixels) != 2
+        or any(type(x) is not int or not 1 <= x <= 32768 for x in expected_pixels)):
+        raise AuthoringError('expected pixel width and height must each be integers in 1..32768')
+    body = return_report(request, candidates, decoded=decoded)
+    body.pop('report_sha256')
+    body['schema_id'] = 'manju.return-preflight/v2'
+    body['policy']['resolution_policy'] = 'explicit_exact_pixel_dimensions'
+    body['policy']['expected_pixels'] = list(expected_pixels)
+    body['policy']['vendor_origin_inferred'] = False
+    for item in body['items']:
+        c = item['candidate']
+        actual = [c['width'], c['height']] if c['width'] and c['height'] else None
+        item['checks'][-1] = {'id': 'exact_pixel_dimensions', 'expected': list(expected_pixels),
+                              'actual': actual, 'state': 'unknown' if actual is None else
+                              'match' if actual == list(expected_pixels) else 'mismatch'}
+        states = {check['state'] for check in item['checks']}
+        item['status'] = 'needs_attention' if states & {'mismatch','unknown'} else 'metadata_matches_requested_checks'
+    return {**body, 'report_sha256': digest(body)}

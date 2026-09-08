@@ -115,12 +115,12 @@ def test_missing_files_refuse_and_rebind_by_hash(page,tmp_path):
     req=Request(shot_id='首帧',task='animate',prompt='保持主体，缓慢推镜',duration_s=8,resolution='720p',aspect_ratio='16:9',assets=[dict(id='A1',role='first_frame',path='旧名字.png',sha256=sha256(data).hexdigest(),bytes=len(data))])
     source=tmp_path/'request.json';source.write_text(json.dumps(req.model_dump(mode='json'),ensure_ascii=False))
     page.locator('#import-request').set_input_files(source)
-    page.wait_for_function('ManjuWorkbench.state.assets.length===1')
+    page.wait_for_function('()=>(ManjuWorkbench.state.assets.length===1)')
     page.locator('#check-plan').click();page.get_by_role('radio',name='Veo 3.1 Preview first',exact=True).check()
     page.locator('#reviewer').fill('测试');page.locator('#human-confirmed').check();page.locator('#ack-warnings').check();page.locator('#export-bundle').click()
-    page.wait_for_function('document.getElementById("status").textContent.includes("缺少实际素材")')
+    page.wait_for_function('()=>(document.getElementById("status").textContent.includes("缺少实际素材"))')
     page.locator('#asset-files').set_input_files(image)
-    page.wait_for_function('ManjuWorkbench.state.files.size===1 && !ManjuWorkbench.state.busy')
+    page.wait_for_function('()=>(ManjuWorkbench.state.files.size===1 && !ManjuWorkbench.state.busy)')
     assert page.evaluate('ManjuWorkbench.state.assets.length')==1
     assert not page.locator('#human-confirmed').is_checked()
     page.locator('#check-plan').click();page.get_by_role('radio',name='Veo 3.1 Preview first',exact=True).check()
@@ -148,7 +148,7 @@ def test_prompt_xss_is_data_not_script(page,tmp_path):
     r=Request(shot_id='x',task='create',prompt='<img src=x onerror="window.injected=true">')
     path=tmp_path/'x.json';path.write_text(json.dumps(r.model_dump(mode='json')))
     page.locator('#import-request').set_input_files(path)
-    page.wait_for_function('document.getElementById("prompt").value.includes("onerror")')
+    page.wait_for_function('()=>(document.getElementById("prompt").value.includes("onerror"))')
     page.locator('#check-plan').click()
     assert not page.evaluate('Boolean(window.injected)')
     assert page.locator('img').count()==0
@@ -198,6 +198,6 @@ def test_readonly_project_import_in_browser(page,tmp_project,add_shot,tmp_path):
     data=from_shot(tmp_project.root,'S01')
     path=tmp_path/'shot.json';path.write_text(json.dumps(data,ensure_ascii=False))
     page.locator('#import-request').set_input_files(path)
-    page.wait_for_function('document.getElementById("shot-id").value==="S01"')
+    page.wait_for_function('()=>(document.getElementById("shot-id").value==="S01")')
     assert page.evaluate('ManjuWorkbench.getRequest()')==data['request']
     assert page.locator('#source-details').is_visible()

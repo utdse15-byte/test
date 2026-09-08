@@ -51,12 +51,15 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
         raise ValueError('Commit source and documentation before packaging')
     version = json.loads((repo/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))
     stage = version['stage']
-    if stage not in {'R8','R9','R10'}:
+    if stage not in {'R8','R9','R10','R11'}:
         raise ValueError('Unsupported cumulative stage')
     head, tree = git('rev-parse','HEAD').strip(), git('rev-parse','HEAD^{tree}').strip()
     names = [n for n in git('ls-files','-z').split('\0') if n]
     if any(Path(n).suffix.lower() in FONT_EXTS for n in names):
         raise ValueError('Do not distribute font files')
+    for item in git('rev-list','--objects','--all').splitlines():
+        if ' ' in item and Path(item.split(' ',1)[1]).suffix.lower() in FONT_EXTS:
+            raise ValueError('Do not distribute font files inside Git history')
     output.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='manju-release-',dir=output.parent) as td:
         temp=Path(td);root=temp/f'MANJU_{stage}_CUMULATIVE';source=root/'source';source.mkdir(parents=True)
@@ -69,7 +72,7 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
         diff=subprocess.check_output(['git','diff','--binary',version['baseline'],'HEAD'],cwd=repo)
         (root/'CHANGES_FROM_R2.patch').write_bytes(diff)
         wheels=root/'wheels';wheels.mkdir()
-        wheel_log=run([sys.executable,'-m','pip','wheel','--no-deps','--no-build-isolation',
+        wheel_log=run([sys.executable,'-m','pip','wheel','--no-index','--no-deps','--no-build-isolation',
                        '--disable-pip-version-check','--wheel-dir',str(wheels),str(source)])
         # Build artifacts belong outside the immutable tracked source copy.
         for extra in ['build','src/manju.egg-info']:
@@ -79,6 +82,10 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
                      'START_WINDOWS.cmd','VERIFY_WINDOWS.cmd','QUICKSTART_ZH.md']:
             shutil.copy2(repo/'tools/delivery'/name,root/name)
         shutil.copy2(repo/'tools/model_workbench.html',root/'OPEN_MODEL_WORKBENCH.html')
+        for name, target_name in [(f'{stage}_X_RESEARCH.md','MODEL_RESEARCH.md'),
+                                  (f'{stage}_VALIDATION.md','VALIDATION.md')]:
+            report = repo/'REPORTS/continuation'/name
+            if report.is_file():shutil.copy2(report,root/target_name)
         intro=(repo/'tools/delivery/QUICKSTART_ZH.md').read_text(encoding='utf-8').replace('R7',stage)
         intro += ('\n\n## 本轮工作现场与模型回收\n'
                   '完整工作现场 ZIP 会保存实际素材、能力档、未完成文字与审片记录。恢复须显式确认，当前批准勾选会清除。\n'
@@ -98,7 +105,8 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
         (ev/'wheel-build.log').write_text(wheel_log,encoding='utf-8')
         meta={**version,'git_head':head,'git_tree':tree,'wheel':'wheels/'+wheel.name,
               'created_at':datetime.now(timezone.utc).isoformat(),
-              'prior_verified_stage':'R7','prior_archive_sha256':'eec2efcf3e56c31dab55a8cd4a60fdf3afba0887bf4da9b3b06022e6103060bc'}
+              'prior_verified_stage':version.get('prior_verified_stage','R7'),
+              'prior_archive_sha256':version.get('prior_archive_sha256','eec2efcf3e56c31dab55a8cd4a60fdf3afba0887bf4da9b3b06022e6103060bc')}
         (root/'PACKAGE.json').write_text(json.dumps(meta,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
         sums={p.relative_to(root).as_posix():sha256(p.read_bytes()).hexdigest()
               for p in sorted(root.rglob('*')) if p.is_file()}

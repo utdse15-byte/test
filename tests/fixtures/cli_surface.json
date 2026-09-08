@@ -404,6 +404,25 @@
       "request"
     ]
   },
+  "models repair-create": {
+    "exists": true,
+    "params": [
+      "change",
+      "end_ms",
+      "output",
+      "preserve",
+      "request",
+      "requested_by",
+      "source",
+      "start_ms"
+    ]
+  },
+  "models repair-verify": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "models verify": {
     "exists": true,
     "params": [

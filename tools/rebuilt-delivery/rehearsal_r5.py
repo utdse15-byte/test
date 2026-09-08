@@ -19,7 +19,7 @@ with sync_playwright() as p:
  page.locator('#preserve').fill('主体身份\n镜头构图');page.locator('#change').fill('光线变化')
  for role,name in [('first_frame','首帧.png'),('last_frame','尾帧.png')]:
   page.locator('#asset-role').select_option(role);page.locator('#asset-files').set_input_files(images/name)
-  page.wait_for_function('!ManjuWorkbench.state.busy')
+  page.wait_for_function('()=>(!ManjuWorkbench.state.busy)')
   page.wait_for_function('(n)=>ManjuWorkbench.state.assets.length===n',arg=1 if role=='first_frame' else 2)
  page.locator('#check-plan').click();page.get_by_role('radio',name='MiniMax H3 first-last',exact=True).check()
  page.locator('#reviewer').fill('合成媒体演练，不是用户审批');page.locator('#human-confirmed').check();page.locator('#ack-warnings').check()

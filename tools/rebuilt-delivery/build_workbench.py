@@ -21,6 +21,11 @@ if returns_js.is_file():
 catalog_js=root/'tools/workbench.catalog.js'
 if catalog_js.is_file():
  script=script.replace('// CATALOG_SCRIPT',catalog_js.read_text(encoding='utf-8'))
+repair_html=root/'tools/workbench.repair.html'
+repair_js=root/'tools/workbench.repair.js'
+if repair_html.is_file() and repair_js.is_file():
+ template=template.replace('<!-- REPAIR_SECTION -->',repair_html.read_text(encoding='utf-8'))
+ script=script.replace('// REPAIR_SCRIPT',repair_js.read_text(encoding='utf-8'))
 # Do not allow JSON strings or program string literals to close a script tag.
 html=template.replace('__CATALOG__',catalog.replace('</','<\\/')).replace('__SCRIPT__',script.replace('</script','<\\/script')).replace('__RELEASE__',release)
 for path in [root/'tools/model_workbench.html',root/'src/manju/authoring/data/workbench.html']:

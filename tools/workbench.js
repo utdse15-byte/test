@@ -153,4 +153,5 @@ window.ManjuWorkbench={SHA256,normalizeRequest,normalizeCatalog,modeReport,optio
 // WORKSPACE_SCRIPT
 // RETURNS_SCRIPT
 // CATALOG_SCRIPT
+// REPAIR_SCRIPT
 })();

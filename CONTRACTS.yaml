@@ -982,6 +982,42 @@ schemas:
     write_older: false
     notes: Portable session and decision history. Promotion requires actual reviewed file and unchanged creative intent.
 
+  - id: manju.repair-plan/v1
+    kind: schema
+    owner: manju.authoring.repair:RepairPlan
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Independent millisecond-scoped revision context with actual source identity. Not execution, frame accuracy, or approval.
+
+  - id: manju.repair-manifest/v1
+    kind: schema
+    owner: manju.authoring.repair:verify_repair_bundle
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Closed stored ZIP inventory binding a plan, brief and full original video. Metadata not independently reprobed by verifier.
+
+  - id: manju.repair-verification/v1
+    kind: schema
+    owner: manju.authoring.repair:verify_repair_bundle
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Read-only byte integrity report; no assurance of provider, rights, image quality or unchanged surroundings.
+
+  - id: manju.return-preflight/v2
+    kind: schema
+    owner: manju.authoring.returns:raster_report
+    status: experimental
+    latest_version: 2
+    read_older: false
+    write_older: false
+    notes: Opt-in exact pixel dimensions. Default v1 and Request/v1 hashes are unchanged; no vendor origin inferred.
+
 documents:
   - id: project.yaml
     kind: document

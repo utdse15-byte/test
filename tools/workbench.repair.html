@@ -1,0 +1,17 @@
+<section class="panel" id="repair-section">
+<h2><span class="num">06</span> 只返工出问题的片段</h2>
+<p class="hint">先选原视频，标出要改的范围，再把完整原片与明确的修改要求一起交接。这里不生成、剪切或自动拼接视频。</p>
+<div class="warningbox">返工是独立工作区，请用下方“保存返工 ZIP”单独备份。它不包含在上方的任务与审片工作现场 ZIP 中；恢复返工也不会覆盖上方任务。</div>
+<div class="actions"><label class="filebtn" for="repair-source">选择原视频<input id="repair-source" type="file" class="hidden" accept="video/mp4,video/webm,video/quicktime,.mkv"></label><label class="filebtn" for="repair-import">核验并重新打开返工 ZIP<input id="repair-import" type="file" class="hidden" accept=".zip,application/zip"></label><button id="repair-current-context">使用上方任务作为上下文</button></div>
+<p id="repair-status" class="hint" role="status" aria-live="polite">尚未选择原片。需要能够读取时长和像素尺寸的视频，单文件最多 128 MiB。</p>
+<video id="repair-video" controls muted playsinline preload="metadata" style="width:100%;max-height:340px;background:#112d38;border-radius:8px" hidden></video>
+<div class="formrow"><label class="field" for="repair-start">需要修改：开始（秒）<input id="repair-start" type="number" min="0" step="0.001" value="0"></label><label class="field" for="repair-end">需要修改：结束（秒）<input id="repair-end" type="number" min="0.001" step="0.001" value="1"></label></div>
+<div class="actions"><button id="repair-mark-start">把当前播放位置设为开始</button><button id="repair-mark-end">把当前播放位置设为结束</button><button id="repair-preview">预览片段与上下文</button></div>
+<div class="formrow"><label class="field" for="repair-before">前方参考长度（秒）<input id="repair-before" type="number" min="0" max="10" step="0.001" value="0.5"></label><label class="field" for="repair-after">后方参考长度（秒）<input id="repair-after" type="number" min="0" max="10" step="0.001" value="0.5"></label></div>
+<div class="formrow"><label class="field" for="repair-preserve">必须保留，每行一项<textarea id="repair-preserve" rows="3" maxlength="60000" placeholder="人物身份、服装与背景\n修改范围外的画面"></textarea></label><label class="field" for="repair-change">这一段只改什么，每行一项<textarea id="repair-change" rows="3" maxlength="60000" placeholder="修复手部的变形，保留抬手动作"></textarea></label></div>
+<div class="formrow"><label class="field" for="repair-audio">声音要求<select id="repair-audio"><option value="preserve_original">保留原声音</option><option value="needs_manual_review">需要另行人工处理声音</option></select></label><label class="field" for="repair-human">请求人<input id="repair-human" maxlength="120" autocomplete="off"></label></div>
+<label class="checkline"><input id="repair-confirmed" type="checkbox"><span>我已查看原片并确认返工范围。这只记录修改意图，不批准生成费用、返回作品或自动选片。</span></label>
+<div class="actions"><button id="repair-export" class="primary">保存返工 ZIP（含实际原片）</button></div>
+<details><summary>查看返工上下文与边界</summary><pre id="repair-context">默认使用上方当前任务；重新打开返工时保留它自己的原任务上下文。</pre></details>
+<p class="hint">时间从原片开始，使用 [开始, 结束) 半开区间，不声称帧精确。保留项是要求，不是生成模型的保证。外部返回后仍须检查接缝、范围外画面与声音，再人工审片。</p>
+</section>
