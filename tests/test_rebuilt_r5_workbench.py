@@ -38,7 +38,7 @@ def test_cli_exports_standalone_and_refuses_overwrite(tmp_path):
 
 def test_standalone_is_reproducible():
     assert PAGE.read_bytes()==(REPO/'src/manju/authoring/data/workbench.html').read_bytes()
-    text=PAGE.read_text()
+    text=PAGE.read_text(encoding='utf-8')
     assert "connect-src 'none'" in text and '__SCRIPT__' not in text
     assert '<script src=' not in text and '@import' not in text
 
@@ -61,7 +61,7 @@ def page(browser):
     if os.environ.get('MANJU_BROWSER_TEST_TRANSPORT') == 'isolated_document':
         # Sandbox policy blocks every navigation before route interception.
         # This executes the exact file bytes but is NOT file:// navigation acceptance.
-        page.set_content(PAGE.read_text(),wait_until='load')
+        page.set_content(PAGE.read_text(encoding='utf-8'),wait_until='load')
     else:
         page.goto(PAGE.as_uri(),wait_until='load',timeout=15000)
     yield page
@@ -94,6 +94,7 @@ def test_browser_python_parity(page,changes):
 
 def test_ui_real_download_and_python_verification(page,tmp_path):
     page.locator('#prompt').fill('一个连续镜头，雨后灯光映在水面。')
+    page.locator('#quality-only').uncheck()  # Explicit historical compatibility view.
     page.locator('#check-plan').click()
     page.get_by_role('radio',name='Veo 3.1 Preview text',exact=True).check()
     page.locator('#reviewer').fill('浏览器实测')
@@ -113,9 +114,10 @@ def test_missing_files_refuse_and_rebind_by_hash(page,tmp_path):
     image=tmp_path/'新文件名.png';image.write_bytes(data)
     from hashlib import sha256
     req=Request(shot_id='首帧',task='animate',prompt='保持主体，缓慢推镜',duration_s=8,resolution='720p',aspect_ratio='16:9',assets=[dict(id='A1',role='first_frame',path='旧名字.png',sha256=sha256(data).hexdigest(),bytes=len(data))])
-    source=tmp_path/'request.json';source.write_text(json.dumps(req.model_dump(mode='json'),ensure_ascii=False))
+    source=tmp_path/'request.json';source.write_text(json.dumps(req.model_dump(mode='json'),ensure_ascii=False), encoding='utf-8')
     page.locator('#import-request').set_input_files(source)
     page.wait_for_function('()=>(ManjuWorkbench.state.assets.length===1)')
+    page.locator('#quality-only').uncheck()  # Explicit historical compatibility view.
     page.locator('#check-plan').click();page.get_by_role('radio',name='Veo 3.1 Preview first',exact=True).check()
     page.locator('#reviewer').fill('测试');page.locator('#human-confirmed').check();page.locator('#ack-warnings').check();page.locator('#export-bundle').click()
     page.wait_for_function('()=>(document.getElementById("status").textContent.includes("缺少实际素材"))')
@@ -123,6 +125,7 @@ def test_missing_files_refuse_and_rebind_by_hash(page,tmp_path):
     page.wait_for_function('()=>(ManjuWorkbench.state.files.size===1 && !ManjuWorkbench.state.busy)')
     assert page.evaluate('ManjuWorkbench.state.assets.length')==1
     assert not page.locator('#human-confirmed').is_checked()
+    page.locator('#quality-only').uncheck()  # Explicit historical compatibility view.
     page.locator('#check-plan').click();page.get_by_role('radio',name='Veo 3.1 Preview first',exact=True).check()
     page.locator('#human-confirmed').check();page.locator('#ack-warnings').check()
     with page.expect_download(timeout=20000) as info:page.locator('#export-bundle').click()
@@ -136,6 +139,7 @@ def test_edits_invalidate_and_draft_recovers_without_approval(page):
     if os.environ.get('MANJU_BROWSER_TEST_TRANSPORT') == 'isolated_document':
         pytest.skip('file:// reload and localStorage are blocked by this sandbox, not claimed as verified')
     page.locator('#prompt').fill('尚未导出的重要草稿')
+    page.locator('#quality-only').uncheck()  # Explicit historical compatibility view.
     page.locator('#check-plan').click();page.get_by_role('radio',name='Veo 3.1 Preview text',exact=True).check()
     page.locator('#human-confirmed').check();page.locator('#prompt').fill('继续输入，不丢失')
     assert not page.locator('#human-confirmed').is_checked()
@@ -146,7 +150,7 @@ def test_edits_invalidate_and_draft_recovers_without_approval(page):
 
 def test_prompt_xss_is_data_not_script(page,tmp_path):
     r=Request(shot_id='x',task='create',prompt='<img src=x onerror="window.injected=true">')
-    path=tmp_path/'x.json';path.write_text(json.dumps(r.model_dump(mode='json')))
+    path=tmp_path/'x.json';path.write_text(json.dumps(r.model_dump(mode='json')), encoding='utf-8')
     page.locator('#import-request').set_input_files(path)
     page.wait_for_function('()=>(document.getElementById("prompt").value.includes("onerror"))')
     page.locator('#check-plan').click()
@@ -196,7 +200,7 @@ def test_catalog_roundtrip_python_browser(page):
 def test_readonly_project_import_in_browser(page,tmp_project,add_shot,tmp_path):
     add_shot(tmp_project,'S01')
     data=from_shot(tmp_project.root,'S01')
-    path=tmp_path/'shot.json';path.write_text(json.dumps(data,ensure_ascii=False))
+    path=tmp_path/'shot.json';path.write_text(json.dumps(data,ensure_ascii=False), encoding='utf-8')
     page.locator('#import-request').set_input_files(path)
     page.wait_for_function('()=>(document.getElementById("shot-id").value==="S01")')
     assert page.evaluate('ManjuWorkbench.getRequest()')==data['request']

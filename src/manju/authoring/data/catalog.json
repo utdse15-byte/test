@@ -1,6 +1,6 @@
 {
   "schema_id": "manju.model-catalog/v1",
-  "revision": "2026-09-08.r11.1",
+  "revision": "2026-09-08-r12-frontier",
   "profiles": [
     {
       "id": "minimax-h3",
@@ -1887,6 +1887,622 @@
         "真实人物参考可能要求 LAS 素材库白名单和已获授权的素材，本工具不代办、不上传。",
         "音频仅接受 wav/mp3，2–30 秒且总时长≤30秒；不同素材模态组合需区分首尾帧与参考模式。",
         "返回链接文档有效期 24 小时，任务 ID 保留 7 天；成功生成后及时下载原文件，网页链接不是永久备份。"
+      ]
+    },
+    {
+      "id": "wan3-standard",
+      "label": "Wan 3.0 · 标准版（非 Prime）",
+      "vendor": "Alibaba Cloud",
+      "model_id": "wan3.0-video",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "wan3-standard-20260908",
+      "source_url": "https://www.alibabacloud.com/help/en/model-studio/wan3-video-generation-api-reference",
+      "checked_on": "2026-09-08",
+      "review_after": "2026-09-22",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 20000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 20000000,
+            "last_frame": 20000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "reference-images",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              1,
+              10
+            ],
+            "reference_audio": [
+              0,
+              5
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "reference_audio": 15000
+          },
+          "input_duration_min_ms": {
+            "reference_audio": 1000
+          },
+          "input_total_duration_max_ms": {
+            "reference_audio": 15000
+          },
+          "input_bytes_max": {
+            "subject_reference": 20000000,
+            "reference_audio": 15000000
+          },
+          "input_extensions": {
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "reference_audio": [
+              ".mp3",
+              ".wav"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "reference-motion",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              0,
+              10
+            ],
+            "reference_video": [
+              1,
+              5
+            ],
+            "reference_audio": [
+              0,
+              5
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            15
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "reference_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_duration_min_ms": {
+            "reference_video": 1000,
+            "reference_audio": 1000
+          },
+          "input_total_duration_max_ms": {
+            "reference_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_bytes_max": {
+            "subject_reference": 20000000,
+            "reference_video": 100000000,
+            "reference_audio": 15000000
+          },
+          "input_extensions": {
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "reference_video": [
+              ".mp4",
+              ".mov"
+            ],
+            "reference_audio": [
+              ".mp3",
+              ".wav"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "本适配为保守子集：视频输入合计最多15秒，输出2至15秒，确保输入加输出不超过30秒；供应商完整能力可更长，未在此档开放。"
+          ]
+        },
+        {
+          "id": "edit",
+          "task": "edit",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ],
+            "subject_reference": [
+              0,
+              10
+            ],
+            "reference_audio": [
+              0,
+              5
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            15
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "source_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_duration_min_ms": {
+            "source_video": 1000,
+            "reference_audio": 1000
+          },
+          "input_total_duration_max_ms": {
+            "source_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_bytes_max": {
+            "source_video": 100000000,
+            "subject_reference": 20000000,
+            "reference_audio": 15000000
+          },
+          "input_extensions": {
+            "source_video": [
+              ".mp4",
+              ".mov"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "reference_audio": [
+              ".mp3",
+              ".wav"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "本适配为保守子集：视频输入合计最多15秒，输出2至15秒，确保输入加输出不超过30秒；供应商完整能力可更长，未在此档开放。",
+            "source_video 是本地用途；外部提交映射为 reference_video。本工具不上传或调用接口。"
+          ]
+        },
+        {
+          "id": "extend",
+          "task": "extend",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            15
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "source_video": 15000
+          },
+          "input_duration_min_ms": {
+            "source_video": 1000
+          },
+          "input_total_duration_max_ms": {
+            "source_video": 15000
+          },
+          "input_bytes_max": {
+            "source_video": 100000000
+          },
+          "input_extensions": {
+            "source_video": [
+              ".mp4",
+              ".mov"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "本适配为保守子集：视频输入合计最多15秒，输出2至15秒，确保输入加输出不超过30秒；供应商完整能力可更长，未在此档开放。",
+            "source_video 是本地用途；外部提交映射为 reference_video。本工具不上传或调用接口。"
+          ]
+        }
+      ],
+      "notes": [
+        "只适配标准版，不用 Prime 的速度宣传替代画质证据。接口目前为预览。",
+        "输入图像尺寸/透明通道/帧率、账户区域与实际接受情况仍需核验；未声明文件与网页链接输入。",
+        "参考素材编号按各媒体类别独立计数，需在外部明确各素材用途。",
+        "本地分辨率标签接受 P/p 两种写法；外部 API 参数使用大写 P，本包不是可直接发送的 API 请求。"
+      ]
+    },
+    {
+      "id": "fal-h3-max",
+      "label": "H3 Max · fal 后训练版",
+      "vendor": "fal",
+      "model_id": "minimax/h3-max",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "fal-h3-max-20260908",
+      "source_url": "https://fal.ai/models/minimax/h3-max/image-to-video/api",
+      "checked_on": "2026-09-08",
+      "review_after": "2026-09-22",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": [
+            "21:9",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。"
+          ]
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。",
+            "画幅跟随首帧；仅尾帧时跟随尾帧。"
+          ]
+        },
+        {
+          "id": "last",
+          "task": "animate",
+          "roles": {
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。",
+            "画幅跟随首帧；仅尾帧时跟随尾帧。"
+          ]
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。",
+            "画幅跟随首帧；仅尾帧时跟随尾帧。"
+          ]
+        }
+      ],
+      "notes": [
+        "不是 MiniMax 官方 MiniMax-H3-Max；身份和质量证据不得混用。",
+        "文本入口 minimax/h3-max/text-to-video；图像/首尾帧入口 minimax/h3-max/image-to-video。",
+        "1080P 是从原生768P进行 latent refinement，不宣称原生1080P。",
+        "质量优先时可在外部选择 prompt_expansion_mode=quality；扩写会改变提示词，应保留并人工核对 expanded_prompt，不替你自动开启。",
+        "本地分辨率标签接受 P/p 两种写法；外部 API 参数使用大写 P，本包不是可直接发送的 API 请求。"
       ]
     }
   ]

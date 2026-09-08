@@ -16,7 +16,7 @@ with sync_playwright() as p:
  b=p.chromium.launch(executable_path='/usr/bin/chromium',headless=True,args=['--no-sandbox'])
  context=b.new_context(accept_downloads=True,viewport={'width':1365,'height':1000});page=context.new_page();errors=[];requests=[]
  page.on('pageerror',lambda e:errors.append(str(e)));page.on('request',lambda r:requests.append(r.url))
- page.set_content(html.read_text(),wait_until='load')
+ page.set_content(html.read_text(encoding='utf-8'),wait_until='load')
  page.locator('#shot-id').fill('试镜：保持连续运动')
  page.locator('#prompt').fill('合成流程演练：比较运动连续性，固定镜头，不改变主体。')
  page.locator('#review-files').set_input_files(clips)
@@ -53,4 +53,4 @@ with sync_playwright() as p:
                archive_sha256=file_digest(archive),actual_browser_download_saved=True,commercial_api_calls=0,
                page_errors=errors,transport='isolated_document; native file navigation blocked by sandbox policy',
                native_windows_double_click_verified=False,review_document_sha256=file_digest(review))
- (root/'RESULT.json').write_text(json.dumps(result,ensure_ascii=False,indent=2));print(json.dumps(result,ensure_ascii=False));b.close()
+ (root/'RESULT.json').write_text(json.dumps(result,ensure_ascii=False,indent=2), encoding='utf-8');print(json.dumps(result,ensure_ascii=False));b.close()

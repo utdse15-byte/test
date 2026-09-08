@@ -32,7 +32,7 @@ def page(browser):
     page=context.new_page()
     html=Path(__file__).resolve().parents[1]/'tools/model_workbench.html'
     if os.environ.get('MANJU_BROWSER_TEST_TRANSPORT')=='isolated_document':
-        page.set_content(html.read_text(),wait_until='load')
+        page.set_content(html.read_text(encoding='utf-8'),wait_until='load')
     else:
         page.goto(html.as_uri(),wait_until='load',timeout=15000)
     yield page
@@ -148,11 +148,11 @@ def test_final_bundle_tamper_rejected_even_manifest_rehashed(tmp_path,prepared,a
     write_bundle(final,cat,approval,tmp_path,out,draft_review=doc,draft_file=a)
     if attack=='video_rehash':(out/draft_member(doc.session.candidates[0])).write_bytes(b'new')
     if attack=='record_rehash':
-        value=load_json(out/'DRAFT_REVIEW.json');value['decisions'][0]['notes']='new';(out/'DRAFT_REVIEW.json').write_text(json.dumps(value))
-    if attack=='extra_rehash':(out/'unapproved.txt').write_text('x')
+        value=load_json(out/'DRAFT_REVIEW.json');value['decisions'][0]['notes']='new';(out/'DRAFT_REVIEW.json').write_text(json.dumps(value), encoding='utf-8')
+    if attack=='extra_rehash':(out/'unapproved.txt').write_text('x', encoding='utf-8')
     if attack=='strip_proof':(out/'DRAFT_REVIEW.json').unlink()
     manifest=load_json(out/'MANIFEST.json');manifest['files']={p.relative_to(out).as_posix():file_digest(p) for p in out.rglob('*') if p.is_file() and p.name!='MANIFEST.json'}
-    (out/'MANIFEST.json').write_text(json.dumps(manifest))
+    (out/'MANIFEST.json').write_text(json.dumps(manifest), encoding='utf-8')
     with pytest.raises((AuthoringError,ValidationError,OSError)):verify_bundle(out)
 
 
@@ -247,6 +247,7 @@ def test_browser_real_review_promote_download(page,videos,tmp_path):
     assert ReviewDocument.model_validate(load_json(review_file))==doc
     page.locator('#promotion-resolution').fill('1080p');page.locator('#promotion-confirmed').check();page.locator('#promote-review').click()
     page.wait_for_function('() => (ManjuWorkbench.state.stage==="final")')
+    page.locator('#quality-only').uncheck()  # Explicit historical compatibility view.
     page.locator('#check-plan').click();page.get_by_role('radio',name='Veo 3.1 Preview text',exact=True).check()
     page.locator('#reviewer').fill('合成验收');page.locator('#human-confirmed').check();page.locator('#ack-warnings').check()
     with page.expect_download(timeout=20000) as info:page.locator('#export-bundle').click()
@@ -273,6 +274,7 @@ def test_browser_changed_intent_and_revocation_refuse(page,videos):
 
 def test_browser_final_hash_without_review_cannot_export(page):
     page.evaluate('r=>{ManjuWorkbench.fillRequest(r);ManjuWorkbench.invalidate();}',{**request().model_dump(mode='json'),'stage':'final','approved_draft_sha256':'a'*64})
+    page.locator('#quality-only').uncheck()  # Explicit historical compatibility view.
     page.locator('#check-plan').click();page.get_by_role('radio',name='Veo 3.1 Preview text',exact=True).check()
     page.locator('#reviewer').fill('测试');page.locator('#human-confirmed').check();page.locator('#ack-warnings').check();page.locator('#export-bundle').click()
     page.wait_for_function('() => (document.getElementById("status").textContent.includes("真实审片记录"))')

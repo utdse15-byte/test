@@ -25,7 +25,7 @@ with sync_playwright() as pw:
  contexts=[];errors=[];requests=[]
  def fresh_page():
   context=browser.new_context(accept_downloads=True,viewport={'width':1365,'height':1000});contexts.append(context);page=context.new_page()
-  page.on('pageerror',lambda e:errors.append(str(e)));page.on('request',lambda r:requests.append(r.url));page.set_content(html.read_text(),wait_until='load');return page
+  page.on('pageerror',lambda e:errors.append(str(e)));page.on('request',lambda r:requests.append(r.url));page.set_content(html.read_text(encoding='utf-8'),wait_until='load');return page
  page=fresh_page();page.locator('#shot-id').fill('R10实际闭环');page.locator('#prompt').fill('保持固定镜头，连续运动；合成测试，不代表用户作品。')
  page.locator('#duration').fill('2');page.locator('#resolution').select_option('720p');page.locator('#ratio').select_option('16:9')
  page.locator('#review-files').set_input_files(clips);page.wait_for_function('()=>ManjuReview.state.pending.length===2&&!ManjuReview.state.busy')
@@ -48,11 +48,11 @@ with sync_playwright() as pw:
  # The restored actual files, not filenames or stale media metadata, are inspected again.
  page.locator('#return-section > summary').click()
  with page.expect_download() as info:page.locator('#export-returns').click()
- returns=root/'RETURN_PREFLIGHT.json';info.value.save_as(returns);r=json.loads(returns.read_text())
+ returns=root/'RETURN_PREFLIGHT.json';info.value.save_as(returns);r=json.loads(returns.read_text(encoding='utf-8'))
  assert all(x['status']=='metadata_matches_requested_checks' for x in r['items'])
  assert not r['automatic_approval'] and not r['picture_lock_authorized']
  req=Request.model_validate(r['request']);decoded=inspect_files(req,clips,decode=True)
- (root/'RETURN_FULL_DECODE.json').write_text(json.dumps(decoded,ensure_ascii=False,indent=2))
+ (root/'RETURN_FULL_DECODE.json').write_text(json.dumps(decoded,ensure_ascii=False,indent=2), encoding='utf-8')
  assert all(x['full_video_decode']=='passed' for x in decoded['items'])
  # Preview an older capability catalog, then deliberately leave it unapplied.
  page.locator('#import-catalog').set_input_files(repo/'src/manju/authoring/data/catalog_r7.json');expect(page.locator('#catalog-summary')).to_contain_text('字段变化')
@@ -72,6 +72,6 @@ with sync_playwright() as pw:
  assert not [u for u in requests if u.startswith(('http:','https:'))],requests
  assert [file_digest(c) for c in clips]==before
  report={'ok':True,'html_sha256':file_digest(html),'workspace':workspace,'workspace_sha256':file_digest(archive),'whole_working_view_restored_exactly':True,'restored_media_played_without_rebinding':True,'unsent_review_notes_restored':True,'current_confirmations_cleared':True,'return_specifications_match':True,'full_video_decode_passed':True,'source_media_unchanged':True,'catalog_import_not_automatically_applied':True,'final_handoff':handoff,'final_zip_sha256':file_digest(finalzip),'actual_browser_downloads_saved':4,'commercial_calls':0,'browser':browser.version,'transport':'isolated_document','windows_file_double_click_verified':False,'page_errors':errors}
- (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps(report,ensure_ascii=False,indent=2))
+ (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2), encoding='utf-8');print(json.dumps(report,ensure_ascii=False,indent=2))
  for c in contexts:c.close()
  browser.close()

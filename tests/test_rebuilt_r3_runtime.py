@@ -92,13 +92,13 @@ def test_cancel_does_not_stop_unrelated_process():
 def test_posix_child_stops_even_when_it_ignores_term(tmp_path):
     marker = tmp_path/'child.pid'
     child = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(30)"
-    parent = f"import subprocess,sys,time,pathlib;p=subprocess.Popen([sys.executable,'-c',{child!r}]);pathlib.Path({str(marker)!r}).write_text(str(p.pid));time.sleep(30)"
+    parent = f"import subprocess,sys,time,pathlib;p=subprocess.Popen([sys.executable,'-c',{child!r}]);pathlib.Path({str(marker)!r}).write_text(str(p.pid),encoding='utf-8');time.sleep(30)"
     with pytest.raises(ff.MediaCanceled):
         ff._run_local_process([sys.executable, '-c', parent], timeout=5, check=marker.exists)
-    pid = int(marker.read_text())
+    pid = int(marker.read_text(encoding='utf-8'))
     for _ in range(100):
         stat = Path(f'/proc/{pid}/stat')
-        if not stat.exists() or stat.read_text().split()[2] == 'Z':
+        if not stat.exists() or stat.read_text(encoding='utf-8').split()[2] == 'Z':
             break
         time.sleep(.01)
     else:

@@ -58,5 +58,5 @@ report={'ok':True,'project':p.root.name,'canceled_generation':canceled.to_dict()
  'cancel_elapsed_seconds':elapsed,'old_media_preserved':len(first),'final_unchanged_on_cancel':True,
  'final_sha256':oldhash,'final_duration_seconds':float(probe['format']['duration']),
  'fixture_selection_was_explicit':True,'commercial_generation_called':False}
-(root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2))
+(root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2), encoding='utf-8')
 print(json.dumps(report,ensure_ascii=False,indent=2))

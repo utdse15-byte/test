@@ -12,9 +12,9 @@ def build(repo:Path,output:Path):
     if output.exists() or output.is_symlink():raise FileExistsError('Never overwrite an earlier downloadable toolkit')
     status=subprocess.check_output(['git','status','--porcelain'],cwd=repo)
     if status.strip():raise ValueError('Commit the source first')
-    version=json.loads((repo/'DELIVERY_VERSION.json').read_text())
+    version=json.loads((repo/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))
     stage=version['stage']
-    if stage not in {'R7','R8','R9','R10','R11'}:raise ValueError('This compact toolkit requires R7 or later')
+    if stage not in {'R7','R8','R9','R10','R11','R12'}:raise ValueError('This compact toolkit requires R7 or later')
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo).decode().strip()
     html=(repo/'tools/model_workbench.html').read_bytes()
     if html!=(repo/'src/manju/authoring/data/workbench.html').read_bytes():raise ValueError('Standalone and installed workbench differ')
@@ -38,13 +38,17 @@ def build(repo:Path,output:Path):
 只有明确批准的实际草稿可以晋升，定稿交接 ZIP 会包含批准草稿和审片记录。
 没有自动选片，没有自动 Picture Lock。评分是你的记录，不是机器画质排名。
 
-每次导出都请到浏览器下载列表确认保存。关闭页面前优先保存“完整工作现场 ZIP”：包括实际素材、未完成文字、能力档和审片历史。恢复先核验全部文件，再明确确认；当前批准勾选会清除。浏览器草稿不是永久备份。
+每次导出都请到浏览器下载列表确认保存。关闭页面前保存需要的各区域：上方“镜头任务与审片现场 ZIP”：包括实际素材、未完成文字、能力档和审片历史。恢复先核验全部文件，再明确确认；当前批准勾选会清除。浏览器草稿不是永久备份。
 
 R9 增加返回视频规格检查：时长、画幅与本地最低短边。未知规格不当作通过；浏览器检查不等于完整视频解码、画质合格或人工批准。
 R10 导入能力档后先展示字段差异、当前镜头影响和证据复核窗口，确认后才替换。更换任务后必须重新预览。可预览恢复上一档。已有 Omni Flash 与新 Gen-4.5 仍仅为离线作者档，不接通商业服务。
 
 R11 增加独立局部返工区：选择实际原片，明确毫秒范围、保留项和修改项，再导出含完整原片的返工 ZIP。新窗口可重新打开并核验，原片不剪切、不上传，不自动生成或选片。返工区不包含在旧“完整工作现场 ZIP”内，必须单独保存。
 R11 的明确像素尺寸检查可正确区分标称720p与实际1584×672等画幅。新增Seedance2.5 BytePlus LAS作者档，其他平台规格不会套用。本地资源上限与供应商限制分别成立。
+
+R12 默认质量优先：只展示有日期和精确档案身份依据的前沿候选。没有方案不自动降档。取消勾选才显示历史兼容档；名单不按费用排名，也不代表端点已由本项目做过画质盲测。保存名单依据可单独留档。
+R12 第07区保存导演材料：实际运动/表演底片、关键时刻SDR原尺寸参考帧、外部精修的同画幅PNG目标图、保留/改变要求。目标图可高于原片像素并原样保留；不自动缩小。保存“导演材料 ZIP”，新窗口可恢复并直接播放；导演区不包含在上方任务现场或返工ZIP内，必须单独保存。
+原影片应用的本地占位预演没有被替换成商业模型，质量名单只约束离线交接；不授权上传、生成、费用或自动选片。
 
 ## 体积与边界
 
@@ -56,6 +60,7 @@ R11 的明确像素尺寸检查可正确区分标称720p与实际1584×672等画
 
 OPEN_MODEL_WORKBENCH.html：完整离线页面。
 MODEL_CATALOG.json：可单独导入/存档的能力档。
+QUALITY_SHORTLIST.json：带核验日期、来源与档案哈希的质量短名单；只读存档，不是数字签名。
 EXAMPLE_REQUEST.json：不带媒体的合成任务示例。
 VERSION.json：提交、版本和来源文件哈希。
 SHA256SUMS.json：本包内部文件哈希，不是发布者数字签名。
@@ -69,6 +74,7 @@ SHA256SUMS.json：本包内部文件哈希，不是发布者数字签名。
     payload={
       'OPEN_MODEL_WORKBENCH.html':html,
       'MODEL_CATALOG.json':(repo/'src/manju/authoring/data/catalog.json').read_bytes(),
+      **({'QUALITY_SHORTLIST.json':(repo/'src/manju/authoring/data/quality.json').read_bytes()} if (repo/'src/manju/authoring/data/quality.json').is_file() else {}),
       'EXAMPLE_REQUEST.json':(json.dumps(example,ensure_ascii=False,indent=2)+'\n').encode(),
       'READ_ME_FIRST_ZH.md':intro.replace('R7',stage).encode(),
       'VERSION.json':(json.dumps({'stage':stage,'version':version['version'],'git_head':head,

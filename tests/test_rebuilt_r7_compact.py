@@ -12,10 +12,10 @@ P=importlib.util.module_from_spec(spec);spec.loader.exec_module(P)
 @pytest.fixture
 def repo(tmp_path):
     r=tmp_path/'source';r.mkdir();(r/'tools').mkdir();(r/'src/manju/authoring/data').mkdir(parents=True)
-    (r/'DELIVERY_VERSION.json').write_text(json.dumps({'stage':'R7','version':'0.2.0+r7','features':{}}))
+    (r/'DELIVERY_VERSION.json').write_text(json.dumps({'stage':'R7','version':'0.2.0+r7','features':{}}), encoding='utf-8')
     html=b'<!doctype html><title>offline fixture</title>'
     (r/'tools/model_workbench.html').write_bytes(html);(r/'src/manju/authoring/data/workbench.html').write_bytes(html)
-    (r/'src/manju/authoring/data/catalog.json').write_text('{}')
+    (r/'src/manju/authoring/data/catalog.json').write_text('{}', encoding='utf-8')
     for args in [['init','--quiet'],['config','user.name','Manju Test'],['config','user.email','test@example.invalid'],['add','.'],['commit','--quiet','-m','Synthetic compact package fixture']]:
         subprocess.run(['git',*args],cwd=r,check=True,capture_output=True)
     return r
@@ -47,18 +47,18 @@ def test_compact_never_overwrites_old_zip(repo,tmp_path):
 
 
 def test_compact_refuses_dirty_source(repo,tmp_path):
-    (repo/'extra').write_text('not committed')
+    (repo/'extra').write_text('not committed', encoding='utf-8')
     with pytest.raises(ValueError):P.build(repo,tmp_path/'new.zip')
     assert not (tmp_path/'new.zip').exists()
 
 
 def test_compact_refuses_wrong_stage(repo,tmp_path):
-    p=repo/'DELIVERY_VERSION.json';v=json.loads(p.read_text());v['stage']='R6';p.write_text(json.dumps(v));commit(repo)
+    p=repo/'DELIVERY_VERSION.json';v=json.loads(p.read_text(encoding='utf-8'));v['stage']='R6';p.write_text(json.dumps(v), encoding='utf-8');commit(repo)
     with pytest.raises(ValueError):P.build(repo,tmp_path/'new.zip')
     assert not (tmp_path/'new.zip').exists()
 
 
 def test_compact_refuses_divergent_installed_page(repo,tmp_path):
-    (repo/'src/manju/authoring/data/workbench.html').write_text('different');commit(repo)
+    (repo/'src/manju/authoring/data/workbench.html').write_text('different', encoding='utf-8');commit(repo)
     with pytest.raises(ValueError):P.build(repo,tmp_path/'new.zip')
     assert not (tmp_path/'new.zip').exists()

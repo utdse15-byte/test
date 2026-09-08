@@ -237,7 +237,8 @@ def test_cli_round_trip_and_exclusive_output(tmp_path,synthetic_video):
 def test_r10_catalog_preserved_byte_equivalent_profiles():
     old=load_catalog(REPO/'src/manju/authoring/data/catalog_r10.json');new=load_catalog();lookup={p.id:p for p in new.profiles}
     assert all(digest(p)==digest(lookup[p.id]) for p in old.profiles)
-    assert set(lookup)-{p.id for p in old.profiles}=={'seedance-2-5-las'}
+    # This historical contract preserves the R11 addition without forbidding later profiles.
+    assert 'seedance-2-5-las' in set(lookup)-{p.id for p in old.profiles}
 
 
 @pytest.mark.parametrize('duration,resolution,compatible',[(4,'480p',True),(30,'720p',True),(3,'720p',False),(31,'720p',False),(6,'1080p',False),(6,'4k',False)])

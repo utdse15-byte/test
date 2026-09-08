@@ -196,3 +196,23 @@ def repair_verify_command(archive: Path):
     """只读核验返工范围、实际原片与文件清单，不解压或批准作品。"""
     from .repair import verify_repair_bundle
     _emit(verify_repair_bundle(archive))
+
+
+@app.command('frontier-plan')
+@_guard
+def frontier_plan_command(request: Path, catalog: Optional[Path] = typer.Option(None, '--catalog'),
+                          on: Optional[str] = typer.Option(None, '--on'),
+                          output: Optional[Path] = typer.Option(None, '--output')):
+    """仅列质量优先名单内的具体适配，不自动降级；保留证据身份与排除原因。"""
+    from datetime import date
+    from .quality import quality_plan
+    _emit(quality_plan(Request.model_validate(load_json(request)), load_catalog(catalog),
+                       today=date.fromisoformat(on) if on else None), output)
+
+
+@app.command('director-verify')
+@_guard
+def director_verify_command(archive: Path):
+    """只读核验运动底片、原帧和目标图；不生成、不上传、不自动批准。"""
+    from .director import verify_director_bundle
+    _emit(verify_director_bundle(archive))

@@ -51,7 +51,7 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
         raise ValueError('Commit source and documentation before packaging')
     version = json.loads((repo/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))
     stage = version['stage']
-    if stage not in {'R8','R9','R10','R11'}:
+    if stage not in {'R8','R9','R10','R11','R12'}:
         raise ValueError('Unsupported cumulative stage')
     head, tree = git('rev-parse','HEAD').strip(), git('rev-parse','HEAD^{tree}').strip()
     names = [n for n in git('ls-files','-z').split('\0') if n]
@@ -88,7 +88,7 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
             if report.is_file():shutil.copy2(report,root/target_name)
         intro=(repo/'tools/delivery/QUICKSTART_ZH.md').read_text(encoding='utf-8').replace('R7',stage)
         intro += ('\n\n## 本轮工作现场与模型回收\n'
-                  '完整工作现场 ZIP 会保存实际素材、能力档、未完成文字与审片记录。恢复须显式确认，当前批准勾选会清除。\n'
+                  '镜头任务与审片现场 ZIP 会保存实际素材、能力档、未完成文字与审片记录。返工区和导演区必须分别保存各自 ZIP。恢复须显式确认，当前批准勾选会清除。\n'
                   '所有商业模型仍为离线作者适配，不直接调用生成 API，不授权付款或自动选片。\n'
                   '请同时保存完整 ZIP 与校验收据；校验结果不能代替浏览器下载列表中的保存确认。\n')
         (root/'QUICKSTART_ZH.md').write_text(intro,encoding='utf-8')

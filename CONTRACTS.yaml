@@ -1018,6 +1018,52 @@ schemas:
     write_older: false
     notes: Opt-in exact pixel dimensions. Default v1 and Request/v1 hashes are unchanged; no vendor origin inferred.
 
+
+  - id: manju.director-plan/v1
+    kind: schema
+    owner: manju.authoring.director:DirectorPlan
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Motion-first original video, SDR frame and optional same-aspect native guide identities. Draft reference only, no execution or certified frame index.
+
+  - id: manju.director-manifest/v1
+    kind: schema
+    owner: manju.authoring.director:verify_director_bundle
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Closed stored ZIP of exact original and raster bytes, plan and brief. Separate from prior workspace and repair formats.
+
+  - id: manju.director-verification/v1
+    kind: schema
+    owner: manju.authoring.director:verify_director_bundle
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Read-only hashes and bounded PNG structure; not full PNG decode or source metadata reprobe. Browser reopening measures source metadata independently.
+
+  - id: manju.quality-shortlist/v1
+    kind: schema
+    owner: manju.authoring.quality:Shortlist
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Dated editorial shortlist bound to exact capability profile hashes. Not paid per-shot evaluation, publisher signature or a permanent ranking.
+
+  - id: manju.quality-plan/v1
+    kind: schema
+    owner: manju.authoring.quality:quality_plan
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Offline shortlist-filtered capability paths and exclusions. No automatic selection or downgrade; does not reconfigure native placeholder generation.
+
 documents:
   - id: project.yaml
     kind: document

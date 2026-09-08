@@ -140,7 +140,7 @@ def test_browser_return_report_reads_real_candidate_without_approving(page,clip,
     expect(page.locator('#review-status')).to_contain_text('候选文件已核对')
     page.locator('#return-section summary').click()
     with page.expect_download() as d:page.locator('#export-returns').click()
-    out=tmp_path/'browser-return.json';d.value.save_as(out);r=json.loads(out.read_text())
+    out=tmp_path/'browser-return.json';d.value.save_as(out);r=json.loads(out.read_text(encoding='utf-8'))
     assert r['items'][0]['candidate']['sha256']==file_digest(clip)
     assert r['items'][0]['full_video_decode']=='not_checked'
     assert r['items'][0]['status']=='needs_attention'

@@ -28,10 +28,10 @@ def package(tmp_path):
     meta={'stage':'R7','version':'0.2.0+r7','baseline':'a'*40,'git_head':'b'*40,'git_tree':'c'*40,
           'inherits':['R2','R3','R4','R5','R6'],'features':{},'original_r3_r4_bytes_recovered':False,
           'formal_windows_release':False,'wheel':'wheels/manju.whl'}
-    (root/'PACKAGE.json').write_text(json.dumps(meta));(root/'source/DELIVERY_VERSION.json').write_text(json.dumps(meta))
+    (root/'PACKAGE.json').write_text(json.dumps(meta), encoding='utf-8');(root/'source/DELIVERY_VERSION.json').write_text(json.dumps(meta), encoding='utf-8')
     with zipfile.ZipFile(root/meta['wheel'],'w') as z:z.writestr('manju/__init__.py',runtime)
-    for name in ['repository.bundle','CHANGES_FROM_R2.patch','START_HERE.md','VERIFY_PACKAGE.py']:(root/name).write_text('fixture')
-    (root/'OPEN_MODEL_WORKBENCH.html').write_text('<!doctype html><title>local</title>')
+    for name in ['repository.bundle','CHANGES_FROM_R2.patch','START_HERE.md','VERIFY_PACKAGE.py']:(root/name).write_text('fixture', encoding='utf-8')
+    (root/'OPEN_MODEL_WORKBENCH.html').write_text('<!doctype html><title>local</title>', encoding='utf-8')
     seal(root);return root
 
 
@@ -39,7 +39,7 @@ def test_package_integrity_and_explicit_local_runtime_directories(package):
     before=V.verify(package);assert before['stage']=='R7' and before['wheel_runtime_files']==1
     assert not before['git_restore_checked']
     for directory in ['.venv','workspace','local-logs','__pycache__']:
-        (package/directory).mkdir();(package/directory/'local.txt').write_text('mutable local state, not release payload')
+        (package/directory).mkdir();(package/directory/'local.txt').write_text('mutable local state, not release payload', encoding='utf-8')
     assert V.verify(package)['checked_files']==before['checked_files']
 
 
@@ -51,26 +51,26 @@ def test_portable_paths_rejected(name):
 
 @pytest.mark.parametrize('attack',['tamper','extra','missing','symlink','dir_symlink','local_symlink','version','inherits','wheel_path','hash_format','duplicate_json','inventory_collision'])
 def test_package_fail_closed(package,tmp_path,attack):
-    if attack=='tamper':(package/'START_HERE.md').write_text('changed')
-    if attack=='extra':(package/'unexpected.txt').write_text('unlisted')
+    if attack=='tamper':(package/'START_HERE.md').write_text('changed', encoding='utf-8')
+    if attack=='extra':(package/'unexpected.txt').write_text('unlisted', encoding='utf-8')
     if attack=='missing':(package/'START_HERE.md').unlink()
     if attack=='symlink':
-        outside=tmp_path/'outside.txt';outside.write_text('fixture');(package/'START_HERE.md').unlink();(package/'START_HERE.md').symlink_to(outside)
+        outside=tmp_path/'outside.txt';outside.write_text('fixture', encoding='utf-8');(package/'START_HERE.md').unlink();(package/'START_HERE.md').symlink_to(outside)
     if attack=='dir_symlink':
         outside=tmp_path/'outside';outside.mkdir();(package/'newdir').symlink_to(outside,target_is_directory=True)
     if attack=='local_symlink':
         (package/'local-logs').symlink_to(tmp_path,target_is_directory=True)
     if attack in {'version','inherits','wheel_path'}:
-        value=json.loads((package/'PACKAGE.json').read_text())
+        value=json.loads((package/'PACKAGE.json').read_text(encoding='utf-8'))
         if attack=='version':value['version']='false-upgrade'
         if attack=='inherits':value['inherits']=['R2','R4']
         if attack=='wheel_path':value['wheel']='../other.whl'
-        (package/'PACKAGE.json').write_text(json.dumps(value));seal(package)
+        (package/'PACKAGE.json').write_text(json.dumps(value), encoding='utf-8');seal(package)
     if attack=='hash_format':
-        sums=json.loads((package/'SHA256SUMS.json').read_text());sums['START_HERE.md']='oops';(package/'SHA256SUMS.json').write_text(json.dumps(sums))
-    if attack=='duplicate_json':(package/'SHA256SUMS.json').write_text('{"x":"a","x":"b"}')
+        sums=json.loads((package/'SHA256SUMS.json').read_text(encoding='utf-8'));sums['START_HERE.md']='oops';(package/'SHA256SUMS.json').write_text(json.dumps(sums), encoding='utf-8')
+    if attack=='duplicate_json':(package/'SHA256SUMS.json').write_text('{"x":"a","x":"b"}', encoding='utf-8')
     if attack=='inventory_collision':
-        (package/'Case').mkdir();(package/'case').mkdir();(package/'Case/a').write_text('a');(package/'case/b').write_text('b');seal(package)
+        (package/'Case').mkdir();(package/'case').mkdir();(package/'Case/a').write_text('a', encoding='utf-8');(package/'case/b').write_text('b', encoding='utf-8');seal(package)
     with pytest.raises((ValueError,OSError)):V.verify(package)
 
 
@@ -98,7 +98,7 @@ def test_safe_zip_actual_extract_and_existing_output_untouched(tmp_path):
     z=write_zip(tmp_path/'pack.zip',[('Manju/说明.md','保留字节'),('Manju/a.bin',b'abc')]);out=tmp_path/'restored'
     result=Z.inspect_archive(z,expected_sha256=V.digest(z),extract_to=out)
     assert result['zip_crc_passed'] and result['saved_receipt_matched'] and not result['code_executed']
-    assert (out/'Manju/说明.md').read_text()=='保留字节'
+    assert (out/'Manju/说明.md').read_text(encoding='utf-8')=='保留字节'
     with pytest.raises(FileExistsError):Z.inspect_archive(z,extract_to=out)
     assert (out/'Manju/a.bin').read_bytes()==b'abc'
 
@@ -150,14 +150,14 @@ def test_unconfirmed_install_no_environment(package,monkeypatch):
 
 
 def test_existing_environment_never_touched(package):
-    (package/'.venv').mkdir();marker=package/'.venv/preserve.txt';marker.write_text('mine')
+    (package/'.venv').mkdir();marker=package/'.venv/preserve.txt';marker.write_text('mine', encoding='utf-8')
     with pytest.raises(ValueError):L.install(package,V,allow_network=False,confirmed=True)
-    assert marker.read_text()=='mine'
+    assert marker.read_text(encoding='utf-8')=='mine'
 
 
 def test_failed_new_install_cleanup_only_owned_directory(package,monkeypatch):
     def fail(self,path):
-        (path/'partial.txt').write_text('incomplete');raise OSError('simulated failure')
+        (path/'partial.txt').write_text('incomplete', encoding='utf-8');raise OSError('simulated failure')
     monkeypatch.setattr(L.venv.EnvBuilder,'create',fail)
     with pytest.raises(OSError):L.install(package,V,allow_network=False,confirmed=True)
     assert not (package/'.venv').exists() and (package/'START_HERE.md').exists()
@@ -200,7 +200,7 @@ def test_missing_external_wheelhouse_refused_before_environment(package,tmp_path
 def test_explicit_external_wheelhouse_does_not_modify_release(package,tmp_path,monkeypatch):
     wheelhouse=tmp_path/'offline-dependencies';wheelhouse.mkdir();calls=[]
     def create(self,path):
-        executable=L.python_in(path);executable.parent.mkdir(parents=True,exist_ok=True);executable.write_text('fixture')
+        executable=L.python_in(path);executable.parent.mkdir(parents=True,exist_ok=True);executable.write_text('fixture', encoding='utf-8')
     def run(cmd,**kwargs):
         calls.append(cmd);return subprocess.CompletedProcess(cmd,0)
     monkeypatch.setattr(L.venv.EnvBuilder,'create',create)

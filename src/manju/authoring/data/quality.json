@@ -1,0 +1,61 @@
+{
+  "schema_id": "manju.quality-shortlist/v1",
+  "revision": "2026-09-08-r12",
+  "checked_on": "2026-09-08",
+  "review_after": "2026-09-22",
+  "selection_policy": "quality_first_no_automatic_fallback",
+  "entries": [
+    {
+      "profile_id": "wan3-standard",
+      "profile_sha256": "930b2d055b6f4b94c24e0bdd11efdf5be649536db27371e96a3db7eebdfe6e93",
+      "tasks": [
+        "create",
+        "animate",
+        "bridge",
+        "reference",
+        "edit",
+        "extend"
+      ],
+      "basis": "independent_model_snapshot",
+      "note": "9月8日 AA 的文生视频和视频编辑前列；模型级偏好不证明每种控制任务都最好。只指标准版。"
+    },
+    {
+      "profile_id": "fal-h3-max",
+      "profile_sha256": "54e80a7fe77ed1f8ad75e4f474e093151b1339ef4743fa3fd6ad8a773b186926",
+      "tasks": [
+        "create",
+        "animate",
+        "bridge"
+      ],
+      "basis": "independent_endpoint_snapshot",
+      "note": "9月8日 AA 含音频图生视频首位，文生视频前列；是 fal 后训练版，不把官方同名档冒充此入口。"
+    },
+    {
+      "profile_id": "gemini-omni-1.1-flash",
+      "profile_sha256": "a2d147f26e3996316de7e526ae7ad856784b8ca6015617e11659b5533e2f45a1",
+      "tasks": [
+        "create",
+        "animate",
+        "bridge",
+        "reference",
+        "edit",
+        "extend"
+      ],
+      "basis": "official_successor_family_evidence",
+      "note": "AA 的 Gemini Omni Flash 家族前列，但其5月标签不能当作8月27日 1.1 stable 的独立实测分数；本条按官方继任关系纳入观察型前沿名单。"
+    }
+  ],
+  "sources": [
+    "https://artificialanalysis.ai/video/leaderboard/text-to-video",
+    "https://artificialanalysis.ai/video/leaderboard/image-to-video",
+    "https://artificialanalysis.ai/video/leaderboard/video-editing",
+    "https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash",
+    "https://blog.fal.ai/introducing-h3-max-by-fal/"
+  ],
+  "limits": [
+    "这是有日期的策展名单，不是每个镜头的绝对画质证明；未进行付费盲测。",
+    "能力档内容变化即失去原名单绑定，不能沿用相同ID冒名进入。",
+    "草稿仅表示尚未审片，不要求先用便宜或较弱模型。",
+    "成本/速度不参与筛选；无合适候选时明确停止，不降低输入规格或自动换旧档。"
+  ]
+}

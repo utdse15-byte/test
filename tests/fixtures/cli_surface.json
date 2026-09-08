@@ -377,6 +377,12 @@
       "before"
     ]
   },
+  "models director-verify": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "models example": {
     "exists": true,
     "params": [
@@ -389,6 +395,12 @@
       "output",
       "project",
       "shot_id"
+    ]
+  },
+  "models frontier-plan": {
+    "exists": true,
+    "params": [
+      "request"
     ]
   },
   "models inspect-return": {

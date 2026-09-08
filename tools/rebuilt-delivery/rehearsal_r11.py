@@ -105,7 +105,7 @@ def main():
             page.locator('#export-returns').click()
         legacy_path = root/'RETURN_V1.json'
         download.value.save_as(legacy_path)
-        legacy = json.loads(legacy_path.read_text())
+        legacy = json.loads(legacy_path.read_text(encoding='utf-8'))
         assert legacy['schema_id']=='manju.return-preflight/v1'
         assert legacy['items'][0]['status']=='needs_attention'
         page.locator('#return-runway-raster').click()
@@ -115,7 +115,7 @@ def main():
             page.locator('#export-returns').click()
         exact_path=root/'RETURN_V2.json'
         download.value.save_as(exact_path)
-        exact=json.loads(exact_path.read_text())
+        exact=json.loads(exact_path.read_text(encoding='utf-8'))
         assert exact['schema_id']=='manju.return-preflight/v2'
         assert exact['items'][0]['status']=='metadata_matches_requested_checks'
         assert exact['request_sha256']==legacy['request_sha256']
@@ -124,7 +124,7 @@ def main():
         decoded=inspect_files(req,[source],decode=True,expected_pixels=(1584,672))
         assert decoded['items'][0]['full_video_decode']=='passed'
         assert decoded['items'][0]['status']=='metadata_matches_requested_checks'
-        (root/'FULL_DECODE.json').write_text(json.dumps(decoded,ensure_ascii=False,indent=2)+'\n')
+        (root/'FULL_DECODE.json').write_text(json.dumps(decoded,ensure_ascii=False,indent=2)+'\n', encoding='utf-8')
         page.set_viewport_size({'width':390,'height':844})
         assert page.evaluate('document.documentElement.scrollWidth<=innerWidth')
         page.locator('#return-section').screenshot(path=str(root/'return-narrow.png'))
@@ -145,7 +145,7 @@ def main():
                 'page_errors':errors, 'http_requests':0, 'browser_version':browser.version,
                 'transport':'isolated_document', 'file_navigation_certified':False,
                 'frame_accurate_editing_executed':False, 'ai_video_editing_executed':False}
-        (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
+        (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n', encoding='utf-8')
         for context in contexts:
             context.close()
         browser.close()

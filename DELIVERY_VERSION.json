@@ -1,6 +1,6 @@
 {
-  "stage": "R11",
-  "version": "0.2.0+r11",
+  "stage": "R12",
+  "version": "0.2.0+r12",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -11,7 +11,8 @@
     "R7",
     "R8",
     "R9",
-    "R10"
+    "R10",
+    "R11"
   ],
   "features": {
     "R3": [
@@ -71,12 +72,20 @@
       "按BytePlus LAS具体入口新增Seedance 2.5作者档，旧九档内容不变",
       "显式像素尺寸返回核对及Gen-4.5画幅参考，原Request/v1与默认报告保持兼容",
       "X检索线索与官方来源分级记录，资料冲突不脑补为接口支持"
+    ],
+    "R12": [
+      "质量优先离线规划默认仅展示有日期和身份依据的短名单，无兼容方案不自动降档",
+      "新增Wan3标准入口与fal后训练H3 Max独立作者档，原十档对象保持不变",
+      "名单精确绑定能力档内容哈希，Google继任型号证据与旧榜单成绩分开标注",
+      "独立导演材料ZIP：完整运动底片、原尺寸SDR帧、同画幅目标PNG与逐时刻意图",
+      "目标PNG可高于原片像素且字节不缩小，重新打开独立核验并复测源视频元数据",
+      "保留旧v1任务、工作现场和返工协议；不自动生成、选片、付款或修改影片工程"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
   "reconstruction": true,
   "formal_windows_release": false,
   "commercial_api_executed": false,
-  "prior_verified_stage": "R10",
-  "prior_archive_sha256": "6b895783ec81903714bfaf722169e37733728b180397ec50457995230a38afc4"
+  "prior_verified_stage": "R11",
+  "prior_archive_sha256": "beb6d09fe9b9c7bde47da5d8bfb611413871758736f4c5a563a57912e92cb52b"
 }

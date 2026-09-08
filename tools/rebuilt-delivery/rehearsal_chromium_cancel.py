@@ -37,6 +37,6 @@ try:
  'old_cover_bytes_unchanged':hashlib.sha256(dest.read_bytes()).hexdigest()==old,
  'unrelated_process_survived':other.poll() is None,'observed_owned_processes_stopped':not any(still_running(x) for x in seen),
  'screenshot_rendering_success_claimed':False,'native_windows_acceptance':False}
- (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps(report,ensure_ascii=False,indent=2));assert report['ok'],report
+ (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2), encoding='utf-8');print(json.dumps(report,ensure_ascii=False,indent=2));assert report['ok'],report
 finally:
  other.terminate();other.wait(timeout=5)

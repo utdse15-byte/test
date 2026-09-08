@@ -12,7 +12,7 @@ with sync_playwright() as p:
  context=b.new_context(accept_downloads=True,viewport={'width':1365,'height':1000})
  page=context.new_page();requests=[];errors=[]
  page.on('request',lambda r:requests.append(r.url));page.on('pageerror',lambda e:errors.append(str(e)))
- page.set_content(html.read_text(),wait_until='load')
+ page.set_content(html.read_text(encoding='utf-8'),wait_until='load')
  page.locator('#shot-id').fill('雨后首尾桥接')
  page.locator('#task').select_option('bridge');page.locator('#prompt').fill('在一个连续镜头中，从首帧自然过渡到尾帧，保留构图和主体，缓慢改变光线。')
  page.locator('#resolution').select_option('768P');page.locator('#ratio').select_option('adaptive')
@@ -37,6 +37,6 @@ with sync_playwright() as p:
          'zip_crc_passed':True,'actual_browser_download_saved':True,'network_requests':0,'page_errors':errors,
          'transport':'isolated_document: exact HTML bytes; file:// navigation blocked by sandbox policy',
          'windows_double_click_verified':False}
- (root/'RESULT.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
+ (root/'RESULT.json').write_text(json.dumps(result,ensure_ascii=False,indent=2), encoding='utf-8')
  print(json.dumps(result,ensure_ascii=False))
  b.close()

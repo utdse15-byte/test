@@ -16,7 +16,7 @@
 <section id="catalog-preview" class="panel" hidden><h2>能力档变更预览</h2><p id="catalog-summary"></p><p>这只是带来源声明的本地比较，不联网验证、不自动应用，也不会授权商业生成。可先在顶部保存旧能力档。</p><details><summary>查看字段差异、任务影响和复核窗口</summary><pre id="catalog-diff" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto"></pre></details><label><input id="catalog-confirmed" type="checkbox">我已查看变化，同意替换能力档并清除当前型号选择与确认</label><div class="toolbar"><button id="catalog-refresh">重新预览当前任务</button><button id="apply-catalog" disabled>应用已预览能力档</button><button id="catalog-revert" disabled>预览恢复上一能力档</button><button id="catalog-save-review">下载比较记录</button></div></section>
 
 <div id="status" role="status" aria-live="polite" class="status">准备就绪。填写镜头后点击“检查适配”。文件只在当前浏览器中读取。</div>
-<section class="panel" id="workspace-section"><h2>完整工作现场</h2><p class="hint">换窗口或换电脑前，把任务、能力档、审片历史、未完成的文字和实际素材一起保存。恢复前逐文件验哈希，历史记录不等于重新批准。</p><div class="actions"><button id="export-workspace">备份整个工作现场 ZIP</button><label class="filebtn" for="import-workspace">核验并恢复工作现场<input class="hidden" id="import-workspace" type="file" accept=".zip,application/zip"></label></div><p class="hint" id="workspace-status">备份包括被任务和审片引用的实际媒体，不含下方独立返工区；缺少文件会明确拒绝，不产生看似完整的空壳备份。请自行保留原 ZIP。</p></section>
+<section class="panel" id="workspace-section"><h2>镜头任务与审片现场</h2><p class="hint">换窗口或换电脑前，把任务、能力档、审片历史、未完成的文字和实际素材一起保存。恢复前逐文件验哈希，历史记录不等于重新批准。</p><div class="actions"><button id="export-workspace">备份整个工作现场 ZIP</button><label class="filebtn" for="import-workspace">核验并恢复工作现场<input class="hidden" id="import-workspace" type="file" accept=".zip,application/zip"></label></div><p class="hint" id="workspace-status">备份包括被任务和审片引用的实际媒体，不含下方独立返工区和导演区；缺少文件会明确拒绝，不产生看似完整的空壳备份。请自行保留原 ZIP。</p></section>
 <div class="grid"><div>
 <section class="panel"><h2><span class="num">01</span> 定义镜头任务</h2>
 <div class="formrow"><label class="field" for="shot-id">镜头编号<input id="shot-id" maxlength="120" value="镜头01" autocomplete="off"></label><label class="field" for="task">任务类型<select id="task"><option value="create">从零创建</option><option value="animate">让静帧动起来</option><option value="bridge">连接首尾帧</option><option value="reference">以素材为参考生成</option><option value="edit">修改已有视频</option><option value="extend">延展已有视频</option><option value="perform">表演参考（需核验适配）</option></select></label></div>
@@ -31,7 +31,7 @@
 <div class="formrow"><label class="field" for="asset-role">素材用途<select id="asset-role"><option value="first_frame">首帧</option><option value="last_frame">尾帧</option><option value="subject_reference">角色 / 主体参考图</option><option value="reference_video">参考视频</option><option value="reference_audio">参考音频</option><option value="source_video">待编辑 / 延展视频</option><option value="performance_video">表演参考视频</option></select></label><div style="align-self:center"><label class="filebtn" for="asset-files">添加 / 重新绑定文件<input class="hidden" id="asset-files" type="file" multiple accept="image/*,video/*,audio/*,.heic,.heif"></label></div></div><div id="assets"><div class="empty">没有素材。从零创建可以不添加文件。</div></div>
 </section>
 </div><div>
-<section class="panel"><h2><span class="num">03</span> 检查可用路径</h2><p class="hint">“无已知冲突”不等于提交保证。未知参数、账户、地区和最新费用仍需去供应商确认。结果不按画质或价格排名，也不替你选择。</p><button id="check-plan" class="primary">检查适配</button><p id="plan-summary"></p><div id="options"><div class="empty">填写任务，查看适配档与具体拒绝理由。</div></div></section>
+<section class="panel"><h2><span class="num">03</span> 检查可用路径</h2><p class="hint">“无已知冲突”不等于提交保证。未知参数、账户、地区和最新费用仍需去供应商确认。结果不按画质或价格排名，也不替你选择。</p><div class="warningbox"><strong>质量优先 · 不自动降级</strong><p>默认只显示有日期和具体身份依据的前沿名单。没有合适模式就停在这里，不改画幅、时长或换弱档。草稿仅表示未审片，不是低画质模式。</p><label class="checkline"><input id="quality-only" type="checkbox" checked>只显示质量优先名单</label><p class="hint">取消勾选仅用于兼容旧包，历史档不代表推荐。名单不是绝对画质认证；官方继任型号与旧榜单分数分开标注。 这只约束本工作台的外部交接，不改变原影片应用的本地占位预演；占位卡片不是顶尖模型生成。</p><div id="quality-summary" class="small"></div><button id="export-quality" type="button">保存名单与当前筛选依据</button></div><button id="check-plan" class="primary">检查适配</button><p id="plan-summary"></p><div id="options"><div class="empty">填写任务，查看适配档与具体拒绝理由。</div></div></section>
 <section class="panel"><h2><span class="num">04</span> 确认并保存交接</h2><label class="field" for="reviewer">确认人<input id="reviewer" maxlength="120" placeholder="写下你的名字或工作代号" autocomplete="off"></label><label class="checkline"><input id="human-confirmed" type="checkbox"><span>我已核对提示词、素材用途与所选模式，明确批准这份创作交接。</span></label><label class="checkline"><input id="ack-warnings" type="checkbox"><span>我已阅读本次告警，理解这不是付款授权、生成结果保证或影片锁定。</span></label><div class="warningbox">修改任务、素材或能力档会使当前确认失效。导出的审批只是本地声明，不是身份认证或数字签名。</div><div class="actions"><button id="export-request">保存任务 JSON</button><button id="export-bundle" class="primary">确认并下载素材包 ZIP</button></div><p class="hint">任务 JSON 不包含媒体。素材包包含本次所需的原文件、能力快照、审批、说明和哈希清单；用 <code>manju models verify 解压目录</code> 复核。</p></section>
 </div></div>
 <section id="review-section" class="panel">
@@ -74,12 +74,91 @@
 <p class="hint">时间从原片开始，使用 [开始, 结束) 半开区间，不声称帧精确。保留项是要求，不是生成模型的保证。外部返回后仍须检查接缝、范围外画面与声音，再人工审片。</p>
 </section>
 
+<section class="panel" id="director-section" style="margin-top:20px">
+<h2><span class="num">07</span> 先定运动，再定画面</h2>
+<p>把自己拍的表演、运动底片或已有片段作为时序参考，在重要时刻提取原帧，再把外部精修的目标图配回对应锚点。每份素材只承担明确的工作，不让模型猜。</p>
+<div class="warningbox">原视频始终保留。提取图是浏览器 SDR PNG 参考，不是 HDR / EXR 高位深母版；播放毫秒不是已认证的帧编号。这里不生成视频，也不自动把素材提交给任何模型。</div>
+<div class="formrow" style="margin-top:14px"><label class="field" for="director-shot">独立镜头编号<input id="director-shot" value="导演镜头01" maxlength="120"></label><label class="field" for="director-audio">原片声音怎么处理<select id="director-audio"><option value="preserve_original">保留原声音，返回后人工核对</option><option value="needs_manual_review">声音另行处理，必须人工核对</option></select></label></div>
+<div class="actions"><label class="filebtn" for="director-source">选择运动 / 表演底片<input class="hidden" id="director-source" type="file" accept=".mp4,.mov,.webm,.mkv,video/*"></label><button id="director-capture">提取当前播放画面的原尺寸 PNG</button><button id="director-reset" class="quiet danger">清空导演区</button></div>
+<video id="director-video" controls playsinline preload="metadata" hidden style="width:100%;max-height:450px;margin-top:12px;background:#101615"></video>
+<p class="hint" id="director-media-info">先选原片，再暂停或拖动到重要时刻。最多 16 个锚点，PNG 单张 32 MiB / 8192 像素边长，原片 128 MiB，导演包媒体总计 512 MiB；这些是本地工具上限，不是模型规格。</p>
+<div class="formrow"><label class="field" for="director-preserve">从原片保留什么<textarea id="director-preserve" rows="3" maxlength="30000" placeholder="每行一项，例如：手部动作与镜头运动"></textarea></label><label class="field" for="director-change">允许替换什么<textarea id="director-change" rows="3" maxlength="30000" placeholder="每行一项，例如：角色外观与背景"></textarea></label></div>
+<div id="director-anchors"><div class="empty">尚未提取原帧。目标图建议先在你选择的顶尖图像工具中制作，再以同画幅 PNG 绑定回来。</div></div>
+<p class="hint">每张目标图应表达“这个时刻应是什么样”，而不是描述从旧画面变成新画面的剧情。不自动放大、不静默裁切；目标 PNG 必须与对应原帧画幅相同；可以使用更高像素的原生目标图，实际字节不被缩回原片尺寸。不完整的目标文字和未绑定的目标图也能保存，但不会标记为已批准。</p>
+<div class="actions"><button id="director-export" class="primary">保存导演材料 ZIP（含原片和所有图）</button><label class="filebtn" for="director-import">核验并重新打开导演 ZIP<input class="hidden" id="director-import" type="file" accept=".zip,application/zip"></label></div>
+<p class="hint">导演区单独保存，不包含在上方“镜头任务与审片现场”或返工 ZIP 中。关闭前分别保存需要的区域，并到下载列表确认。重新打开只替换导演区，不覆盖上方任务或工程。</p>
+<p id="director-status" role="status" aria-live="polite" class="hint">未上传任何素材。</p>
+<details><summary>查看当前导演交接说明</summary><pre id="director-brief"></pre></details>
+</section>
+
 <details class="panel"><summary>使用与保存说明</summary><p>本页面不依赖服务器或第三方脚本。草稿尝试保存在当前浏览器的本地存储中，但浏览器清理、隐私模式或 file:// 限制都可能让它失效；请把 JSON 或 ZIP 导出到自己的磁盘。恢复草稿不会恢复媒体字节，必须重新绑定文件。</p><p>从已有工程导入：<code>manju models from-shot 项目目录 镜头编号 --output shot-import.json</code>，然后在这里“导入任务 / 镜头”。原项目不被修改。</p><p>新适配包是独立伴随文件，不向旧 R2 provider-handoff 插入内容。它不生成视频，不连接商用接口，不改动原影片的选片或锁片状态。</p><p>JSON 数据只按文本显示；能力来源网址仅作证据记录，不由本页面自动访问。</p></details>
-<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">R11 · 能力核验 2026-09-06</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
+<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">R12 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
 </main>
+<script id="builtin-quality" type="application/json">{
+  "schema_id": "manju.quality-shortlist/v1",
+  "revision": "2026-09-08-r12",
+  "checked_on": "2026-09-08",
+  "review_after": "2026-09-22",
+  "selection_policy": "quality_first_no_automatic_fallback",
+  "entries": [
+    {
+      "profile_id": "wan3-standard",
+      "profile_sha256": "930b2d055b6f4b94c24e0bdd11efdf5be649536db27371e96a3db7eebdfe6e93",
+      "tasks": [
+        "create",
+        "animate",
+        "bridge",
+        "reference",
+        "edit",
+        "extend"
+      ],
+      "basis": "independent_model_snapshot",
+      "note": "9月8日 AA 的文生视频和视频编辑前列；模型级偏好不证明每种控制任务都最好。只指标准版。"
+    },
+    {
+      "profile_id": "fal-h3-max",
+      "profile_sha256": "54e80a7fe77ed1f8ad75e4f474e093151b1339ef4743fa3fd6ad8a773b186926",
+      "tasks": [
+        "create",
+        "animate",
+        "bridge"
+      ],
+      "basis": "independent_endpoint_snapshot",
+      "note": "9月8日 AA 含音频图生视频首位，文生视频前列；是 fal 后训练版，不把官方同名档冒充此入口。"
+    },
+    {
+      "profile_id": "gemini-omni-1.1-flash",
+      "profile_sha256": "a2d147f26e3996316de7e526ae7ad856784b8ca6015617e11659b5533e2f45a1",
+      "tasks": [
+        "create",
+        "animate",
+        "bridge",
+        "reference",
+        "edit",
+        "extend"
+      ],
+      "basis": "official_successor_family_evidence",
+      "note": "AA 的 Gemini Omni Flash 家族前列，但其5月标签不能当作8月27日 1.1 stable 的独立实测分数；本条按官方继任关系纳入观察型前沿名单。"
+    }
+  ],
+  "sources": [
+    "https://artificialanalysis.ai/video/leaderboard/text-to-video",
+    "https://artificialanalysis.ai/video/leaderboard/image-to-video",
+    "https://artificialanalysis.ai/video/leaderboard/video-editing",
+    "https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash",
+    "https://blog.fal.ai/introducing-h3-max-by-fal/"
+  ],
+  "limits": [
+    "这是有日期的策展名单，不是每个镜头的绝对画质证明；未进行付费盲测。",
+    "能力档内容变化即失去原名单绑定，不能沿用相同ID冒名进入。",
+    "草稿仅表示尚未审片，不要求先用便宜或较弱模型。",
+    "成本/速度不参与筛选；无合适候选时明确停止，不降低输入规格或自动换旧档。"
+  ]
+}
+</script>
 <script id="builtin-catalog" type="application/json">{
   "schema_id": "manju.model-catalog/v1",
-  "revision": "2026-09-08.r11.1",
+  "revision": "2026-09-08-r12-frontier",
   "profiles": [
     {
       "id": "minimax-h3",
@@ -1967,6 +2046,622 @@
         "音频仅接受 wav/mp3，2–30 秒且总时长≤30秒；不同素材模态组合需区分首尾帧与参考模式。",
         "返回链接文档有效期 24 小时，任务 ID 保留 7 天；成功生成后及时下载原文件，网页链接不是永久备份。"
       ]
+    },
+    {
+      "id": "wan3-standard",
+      "label": "Wan 3.0 · 标准版（非 Prime）",
+      "vendor": "Alibaba Cloud",
+      "model_id": "wan3.0-video",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "wan3-standard-20260908",
+      "source_url": "https://www.alibabacloud.com/help/en/model-studio/wan3-video-generation-api-reference",
+      "checked_on": "2026-09-08",
+      "review_after": "2026-09-22",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 20000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {
+            "first_frame": 20000000,
+            "last_frame": 20000000
+          },
+          "input_extensions": {
+            "first_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "last_frame": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "reference-images",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              1,
+              10
+            ],
+            "reference_audio": [
+              0,
+              5
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            30
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "reference_audio": 15000
+          },
+          "input_duration_min_ms": {
+            "reference_audio": 1000
+          },
+          "input_total_duration_max_ms": {
+            "reference_audio": 15000
+          },
+          "input_bytes_max": {
+            "subject_reference": 20000000,
+            "reference_audio": 15000000
+          },
+          "input_extensions": {
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "reference_audio": [
+              ".mp3",
+              ".wav"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": []
+        },
+        {
+          "id": "reference-motion",
+          "task": "reference",
+          "roles": {
+            "subject_reference": [
+              0,
+              10
+            ],
+            "reference_video": [
+              1,
+              5
+            ],
+            "reference_audio": [
+              0,
+              5
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            15
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "reference_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_duration_min_ms": {
+            "reference_video": 1000,
+            "reference_audio": 1000
+          },
+          "input_total_duration_max_ms": {
+            "reference_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_bytes_max": {
+            "subject_reference": 20000000,
+            "reference_video": 100000000,
+            "reference_audio": 15000000
+          },
+          "input_extensions": {
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "reference_video": [
+              ".mp4",
+              ".mov"
+            ],
+            "reference_audio": [
+              ".mp3",
+              ".wav"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "本适配为保守子集：视频输入合计最多15秒，输出2至15秒，确保输入加输出不超过30秒；供应商完整能力可更长，未在此档开放。"
+          ]
+        },
+        {
+          "id": "edit",
+          "task": "edit",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ],
+            "subject_reference": [
+              0,
+              10
+            ],
+            "reference_audio": [
+              0,
+              5
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            15
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "source_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_duration_min_ms": {
+            "source_video": 1000,
+            "reference_audio": 1000
+          },
+          "input_total_duration_max_ms": {
+            "source_video": 15000,
+            "reference_audio": 15000
+          },
+          "input_bytes_max": {
+            "source_video": 100000000,
+            "subject_reference": 20000000,
+            "reference_audio": 15000000
+          },
+          "input_extensions": {
+            "source_video": [
+              ".mp4",
+              ".mov"
+            ],
+            "subject_reference": [
+              ".png",
+              ".jpg",
+              ".jpeg",
+              ".webp"
+            ],
+            "reference_audio": [
+              ".mp3",
+              ".wav"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "本适配为保守子集：视频输入合计最多15秒，输出2至15秒，确保输入加输出不超过30秒；供应商完整能力可更长，未在此档开放。",
+            "source_video 是本地用途；外部提交映射为 reference_video。本工具不上传或调用接口。"
+          ]
+        },
+        {
+          "id": "extend",
+          "task": "extend",
+          "roles": {
+            "source_video": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 1,
+          "durations": null,
+          "duration_range": [
+            2,
+            15
+          ],
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "720P",
+            "720p"
+          ],
+          "aspect_ratios": [
+            "adaptive"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {
+            "source_video": 15000
+          },
+          "input_duration_min_ms": {
+            "source_video": 1000
+          },
+          "input_total_duration_max_ms": {
+            "source_video": 15000
+          },
+          "input_bytes_max": {
+            "source_video": 100000000
+          },
+          "input_extensions": {
+            "source_video": [
+              ".mp4",
+              ".mov"
+            ]
+          },
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "本适配为保守子集：视频输入合计最多15秒，输出2至15秒，确保输入加输出不超过30秒；供应商完整能力可更长，未在此档开放。",
+            "source_video 是本地用途；外部提交映射为 reference_video。本工具不上传或调用接口。"
+          ]
+        }
+      ],
+      "notes": [
+        "只适配标准版，不用 Prime 的速度宣传替代画质证据。接口目前为预览。",
+        "输入图像尺寸/透明通道/帧率、账户区域与实际接受情况仍需核验；未声明文件与网页链接输入。",
+        "参考素材编号按各媒体类别独立计数，需在外部明确各素材用途。",
+        "本地分辨率标签接受 P/p 两种写法；外部 API 参数使用大写 P，本包不是可直接发送的 API 请求。"
+      ]
+    },
+    {
+      "id": "fal-h3-max",
+      "label": "H3 Max · fal 后训练版",
+      "vendor": "fal",
+      "model_id": "minimax/h3-max",
+      "entry": "api_documented_not_connected",
+      "status": "authoring_only",
+      "claim_id": "fal-h3-max-20260908",
+      "source_url": "https://fal.ai/models/minimax/h3-max/image-to-video/api",
+      "checked_on": "2026-09-08",
+      "review_after": "2026-09-22",
+      "modes": [
+        {
+          "id": "text",
+          "task": "create",
+          "roles": {},
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": [
+            "21:9",
+            "16:9",
+            "4:3",
+            "1:1",
+            "3:4",
+            "9:16"
+          ],
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。"
+          ]
+        },
+        {
+          "id": "first",
+          "task": "animate",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。",
+            "画幅跟随首帧；仅尾帧时跟随尾帧。"
+          ]
+        },
+        {
+          "id": "last",
+          "task": "animate",
+          "roles": {
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。",
+            "画幅跟随首帧；仅尾帧时跟随尾帧。"
+          ]
+        },
+        {
+          "id": "first-last",
+          "task": "bridge",
+          "roles": {
+            "first_frame": [
+              1,
+              1
+            ],
+            "last_frame": [
+              1,
+              1
+            ]
+          },
+          "min_total_assets": 0,
+          "durations": null,
+          "duration_range": null,
+          "resolutions": [
+            "1080P",
+            "1080p",
+            "480P",
+            "480p",
+            "768P",
+            "768p"
+          ],
+          "aspect_ratios": null,
+          "high_resolution_requires_s": null,
+          "high_resolutions": [],
+          "input_duration_max_ms": {},
+          "input_duration_min_ms": {},
+          "input_total_duration_max_ms": {},
+          "input_bytes_max": {},
+          "input_extensions": {},
+          "required_origin_model": null,
+          "last_frame_max_source_ms": null,
+          "notes": [
+            "时长默认5秒；公开输入表未清楚限定范围，必须在当前入口确认，不能借用 DirectorInfo 的分段时长。",
+            "画幅跟随首帧；仅尾帧时跟随尾帧。"
+          ]
+        }
+      ],
+      "notes": [
+        "不是 MiniMax 官方 MiniMax-H3-Max；身份和质量证据不得混用。",
+        "文本入口 minimax/h3-max/text-to-video；图像/首尾帧入口 minimax/h3-max/image-to-video。",
+        "1080P 是从原生768P进行 latent refinement，不宣称原生1080P。",
+        "质量优先时可在外部选择 prompt_expansion_mode=quality；扩写会改变提示词，应保留并人工核对 expanded_prompt，不替你自动开启。",
+        "本地分辨率标签接受 P/p 两种写法；外部 API 参数使用大写 P，本包不是可直接发送的 API 请求。"
+      ]
     }
   ]
 }
@@ -1988,7 +2683,7 @@ const encoder=new TextEncoder(), MAX_FILE=128*1024*1024,MAX_TOTAL=512*1024*1024,
 const identifier=/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/,hashPattern=/^[a-f0-9]{64}$/;
 let catalog=JSON.parse($('builtin-catalog').textContent);
 const state={assets:[],files:new Map(),selected:null,plan:null,revision:0,dirty:false,busy:false,generation:0,stage:'draft',draftHash:null,sourceContext:null};
-function element(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=String(text);if(cls)e.className=cls;return e;}
+function element(tag,text,cls){const e=document.createElement(tag);if(text!==undefined&&text!==null)e.textContent=String(text);if(cls)e.className=cls;return e;}
 function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
 function require(condition,message){if(!condition)throw new Error(message);}
 function onlyKeys(value,keys,label){require(value && typeof value==='object' && !Array.isArray(value),label+' 必须是对象');for(const key of Object.keys(value))require(keys.includes(key),label+' 包含未知字段：'+key);}
@@ -2033,9 +2728,9 @@ function fillRequest(r){for(const [id,key]of [['shot-id','shot_id'],['task','tas
 function rawDraft(){return {version:1,form:Object.fromEntries(['shot-id','task','prompt','duration','resolution','ratio','preserve','change','reviewer'].map(id=>[id,$(id).value])),assets:state.assets,stage:state.stage,draftHash:state.draftHash,sourceContext:state.sourceContext};}
 function persist(){try{localStorage.setItem(STORE,JSON.stringify(rawDraft()));$('storage-note').textContent='草稿已在当前浏览器临时保存；媒体不在本地存储中。请导出文件备份。';}catch{$('storage-note').textContent='浏览器不允许保存草稿。关闭前务必导出任务 JSON 或 ZIP。';}}
 function invalidate(){state.revision++;state.selected=null;state.plan=null;state.dirty=true;$('human-confirmed').checked=false;$('ack-warnings').checked=false;$('options').replaceChildren(element('div','任务已变化，请重新检查适配。','empty'));$('plan-summary').textContent='';persist();}
-function message(code){const exact={task_not_supported_by_mode:'模式不支持这个任务',duration_not_supported:'目标时长不在支持列表中',duration_out_of_range:'目标时长超出已核验范围',resolution_not_supported:'分辨率不受此模式支持',aspect_ratio_not_supported:'目标画幅不受支持，或该输入模式只跟随素材画幅',at_least_one_conditioning_asset_required:'需要至少一个参考素材',evidence_date_in_future:'能力档的核验日期在未来，不能采用',last_frame_is_not_clip_end_for_this_input_length:'该输入长度下，供应商的尾帧卡并非整段最后一帧', 'authoring_only:no_API_call_no_quality_or_price_guarantee':'仅作创作交接：没有 API 执行、画质或价格保证','evidence_review_overdue:reverify_before_external_submission':'能力证据已到复核期限，提交前必须重新核验'};if(exact[code])return exact[code];if(code.startsWith('role_count:')){const parts=code.split(':');return (ROLE_NAMES[parts[1]]||parts[1])+' 数量不符：'+parts[2].replace('expected_','需要 ').replace('_to_',' 至 ');}const prefix={asset_bytes_exceeded:'素材文件超过限制',asset_duration_required:'需要补充素材时长（毫秒）',asset_duration_out_of_range:'素材时长不合要求',total_asset_duration_exceeded:'参考素材总时长超限',asset_extension_not_supported:'供应商不支持此素材格式',source_video_origin_must_be:'源视频必须声明为该模型的先前生成结果'};for(const[k,v]of Object.entries(prefix))if(code.startsWith(k+':'))return v+'：'+code.slice(k.length+1);if(code.includes('high_resolution_requires_'))return '此高分辨率要求 '+code.split('_')[3]+' 秒';if(code.includes('_unspecified'))return '参数未指定：'+code.split('_unspecified')[0]+'，提交前确认';if(code.includes('_limit_not_verified'))return '参数限制尚未核验：'+code.split('_limit_not_verified')[0]+'，不能当作支持保证';return code;}
-async function renderPlan(){const r=getRequest(),revision=state.revision,day=new Date().toISOString().slice(0,10);const rows=options(r,catalog,day);const report={schema_id:'manju.model-plan/v1',request_sha256:await hash(r),catalog_sha256:await hash(catalog),evaluated_on:day,selected_profile:null,ranked_by_quality:false,options:rows};if(revision!==state.revision)return null;state.plan=report;state.selected=null;$('options').replaceChildren();$('plan-summary').textContent=`${rows.filter(o=>o.compatible).length} 个模式无已知冲突 / ${rows.length} 个已核验模式。目录：${catalog.revision}`;
- for(const o of rows){const p=catalog.profiles.find(p=>p.id===o.profile_id),card=element('div',undefined,'option'+(o.compatible?'':' blocked'));const top=element('div',undefined,'option-head'),label=element('label'),radio=document.createElement('input');radio.type='radio';radio.name='model-choice';radio.value=p.id+'/'+o.mode_id;radio.disabled=!o.compatible;radio.setAttribute('aria-label',p.label+' '+o.mode_id);radio.addEventListener('change',()=>{state.selected={profile_id:p.id,mode_id:o.mode_id};$('human-confirmed').checked=false;$('ack-warnings').checked=false;document.querySelectorAll('.option').forEach(e=>e.classList.remove('selected'));card.classList.add('selected');});label.append(radio,document.createTextNode(p.label+' · '+o.mode_id));top.append(label,element('span',o.compatible?'无已知冲突':'已阻断','tag '+(o.compatible?'good':'bad')));card.append(top,element('span',ENTRIES[p.entry],'tag'));for(const e of o.errors)card.append(element('div',message(e),'reason'));const details=element('details'),summary=element('summary',`告警与证据（${o.warnings.length}）`);details.append(summary);for(const w of o.warnings)details.append(element('div',message(w),'notice'));details.append(element('div',`核验 ${p.checked_on} · 复核期限 ${p.review_after}`,'small'),element('div',p.source_url,'small muted'));card.append(details);$('options').append(card);}
+function message(code){const exact={task_not_supported_by_mode:'模式不支持这个任务',duration_not_supported:'目标时长不在支持列表中',duration_out_of_range:'目标时长超出已核验范围',resolution_not_supported:'分辨率不受此模式支持',aspect_ratio_not_supported:'目标画幅不受支持，或该输入模式只跟随素材画幅',at_least_one_conditioning_asset_required:'需要至少一个参考素材',evidence_date_in_future:'能力档的核验日期在未来，不能采用',last_frame_is_not_clip_end_for_this_input_length:'该输入长度下，供应商的尾帧卡并非整段最后一帧', 'authoring_only:no_API_call_no_quality_or_price_guarantee':'仅作创作交接：没有 API 执行、画质或价格保证','evidence_review_overdue:reverify_before_external_submission':'能力证据已到复核期限，提交前必须重新核验','quality_shortlist_is_not_per_shot_proof':'前沿名单不是当前镜头的独立画质实测','quality_evidence_review_overdue':'名单证据已过复核期：先核验当前前沿，不会自动换旧模型','leaderboard_score_not_verified_for_exact_successor':'仅有家族榜单与官方继任关系，未核实此具体继任端点的独立榜单分数'};if(exact[code])return exact[code];if(code.startsWith('role_count:')){const parts=code.split(':');return (ROLE_NAMES[parts[1]]||parts[1])+' 数量不符：'+parts[2].replace('expected_','需要 ').replace('_to_',' 至 ');}const prefix={asset_bytes_exceeded:'素材文件超过限制',asset_duration_required:'需要补充素材时长（毫秒）',asset_duration_out_of_range:'素材时长不合要求',total_asset_duration_exceeded:'参考素材总时长超限',asset_extension_not_supported:'供应商不支持此素材格式',source_video_origin_must_be:'源视频必须声明为该模型的先前生成结果'};for(const[k,v]of Object.entries(prefix))if(code.startsWith(k+':'))return v+'：'+code.slice(k.length+1);if(code.includes('high_resolution_requires_'))return '此高分辨率要求 '+code.split('_')[3]+' 秒';if(code.includes('_unspecified'))return '参数未指定：'+code.split('_unspecified')[0]+'，提交前确认';if(code.includes('_limit_not_verified'))return '参数限制尚未核验：'+code.split('_limit_not_verified')[0]+'，不能当作支持保证';return code;}
+async function renderPlan(){const r=getRequest(),revision=state.revision,day=new Date().toISOString().slice(0,10);const baseRows=options(r,catalog,day),quality=await qualityPlan(r,catalog,day);const rows=$('quality-only').checked?quality.options:baseRows;const report={schema_id:'manju.model-plan/v1',request_sha256:await hash(r),catalog_sha256:await hash(catalog),evaluated_on:day,selected_profile:null,ranked_by_quality:false,options:rows};if(revision!==state.revision)return null;state.plan=report;state.quality=quality;state.selected=null;$('quality-summary').textContent=`名单 ${qualityPolicy.checked_on} · 复核期限 ${qualityPolicy.review_after} · ${quality.excluded.length} 个历史/未核实模式未纳入。`;$('options').replaceChildren();$('plan-summary').textContent=`${rows.filter(o=>o.compatible).length} 个模式无已知冲突 / ${rows.length} 个已核验模式。目录：${catalog.revision}`;
+ for(const o of rows){const p=catalog.profiles.find(p=>p.id===o.profile_id),card=element('div',undefined,'option'+(o.compatible?'':' blocked'));const top=element('div',undefined,'option-head'),label=element('label'),radio=document.createElement('input');radio.type='radio';radio.name='model-choice';radio.value=p.id+'/'+o.mode_id;radio.disabled=!o.compatible;radio.setAttribute('aria-label',p.label+' '+o.mode_id);radio.addEventListener('change',()=>{state.selected={profile_id:p.id,mode_id:o.mode_id};$('human-confirmed').checked=false;$('ack-warnings').checked=false;document.querySelectorAll('.option').forEach(e=>e.classList.remove('selected'));card.classList.add('selected');});label.append(radio,document.createTextNode(p.label+' · '+o.mode_id));top.append(label,element('span',o.compatible?'无已知冲突':'已阻断','tag '+(o.compatible?'good':'bad')));card.append(top,element('span',ENTRIES[p.entry],'tag'));if(o.quality_note)card.append(element('div',o.quality_note,'notice'));for(const e of o.errors)card.append(element('div',message(e),'reason'));const details=element('details'),summary=element('summary',`告警与证据（${o.warnings.length}）`);details.append(summary);for(const w of o.warnings)details.append(element('div',message(w),'notice'));details.append(element('div',`核验 ${p.checked_on} · 复核期限 ${p.review_after}`,'small'),element('div',p.source_url,'small muted'));card.append(details);$('options').append(card);}
  if(rows.length===0)$('options').append(element('div','尚无经过核验的任务档。保留任务草稿，不会自动退回别的任务或虚构接口。','empty'));status('检查完成。选择一个无已知冲突的模式，展开阅读告警，再确认交接。');return report;}
 function renderAssets(){$('assets').replaceChildren();if(!state.assets.length){$('assets').append(element('div','没有素材。从零创建可以不添加文件。','empty'));return;}for(const a of state.assets){const row=element('div',undefined,'asset'),top=element('div',undefined,'asset-head'),info=element('div');const file=state.files.get(a.sha256)?.file;info.append(element('strong',file?.name||a.path),element('code',a.sha256),element('div',(file?'已绑定本地文件':'仅有记录，请重新选择文件')+` · ${(a.bytes/1048576).toFixed(2)} MiB`,file?'bound':'unbound'));const remove=element('button','移除');remove.addEventListener('click',()=>{state.assets=state.assets.filter(x=>x.id!==a.id);if(!state.assets.some(x=>x.sha256===a.sha256))state.files.delete(a.sha256);invalidate();renderAssets();});const reuse=element('button','按上方用途复用');reuse.addEventListener('click',handled(()=>{const role=$('asset-role').value;require(!state.assets.some(x=>x.sha256===a.sha256&&x.role===role),'该文件已经绑定这个用途');require(state.assets.length<32,'最多绑定 32 个素材角色');let n=1;while(state.assets.some(x=>x.id==='A'+n))n++;state.assets.push(normalizeAsset({...a,id:'A'+n,role}));invalidate();renderAssets();}));const buttons=element('div');buttons.append(reuse,remove);top.append(info,buttons);row.append(top);const controls=element('div',undefined,'formrow'),label=element('label','素材用途','field'),select=element('select');for(const[k,v]of Object.entries(ROLE_NAMES)){const op=element('option',v);op.value=k;select.append(op);}select.value=a.role;select.addEventListener('change',()=>{a.role=select.value;invalidate();renderAssets();});label.append(select);controls.append(label);if(VIDEO_EXTS.includes(extension(a.path))||AUDIO_EXTS.includes(extension(a.path))){const duration=element('label','素材时长（毫秒，声明）','field'),input=document.createElement('input');input.type='number';input.min='1';input.max='86400000';input.value=a.duration_ms||'';input.addEventListener('input',()=>{a.duration_ms=input.value===''?null:Number(input.value);invalidate();});duration.append(input);controls.append(duration);}if(a.role==='source_video'){const origin=element('label','来源型号声明（Veo 延展填写 veo-3.1）','field'),input=document.createElement('input');input.value=a.origin_model||'';input.maxLength=120;input.addEventListener('input',()=>{a.origin_model=input.value.trim()||null;invalidate();});origin.append(input);controls.append(origin);}row.append(controls);$('assets').append(row);}}
 const CRC_TABLE=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xedb88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
@@ -2049,15 +2744,16 @@ function zipStore(entries){require(entries.length<65535,'ZIP 条目过多');cons
 function brief(r,p,m){let rows=['# Manju 模型交接说明','',`镜头：${r.shot_id}`,`创作任务：${r.task} / ${r.stage}`,`作者适配档：${p.label} / ${m.id}`,`使用入口：${p.entry}；本项目未连接此商业服务。`,'','## 提示词','',r.prompt,'','## 保留项',...r.preserve.map(s=>'- '+s),'','## 改变项',...r.change.map(s=>'- '+s),'','## 目标参数',`时长：${r.duration_s===null?'None':r.duration_s} 秒；分辨率：${r.resolution===null?'None':r.resolution}；画幅：${r.aspect_ratio===null?'None':r.aspect_ratio}`,'','## 素材绑定',...r.assets.map(a=>`- ${a.id} | ${a.role} | assets/${a.path} | SHA-256 ${a.sha256}`)];if(r.approved_draft_sha256)rows.push('',`已批准草稿内容：${r.approved_draft_sha256}`);rows.push('','## 能力证据',p.source_url,`核验：${p.checked_on}；复核期限：${p.review_after}；声明：${p.claim_id}`,'','未知、账户、地区、价格、可用性和媒体编码限制仍需提交前核验。','人工批准只固定这份创作交接，不授权付费、不自动选片、不批准 Picture Lock。','');return rows.join('\n');}
 async function exportBundle(){
  require(!state.busy,'文件仍在处理中');
+ state.busy=true;$('export-bundle').disabled=true;
+ try{
  const request=getRequest(),selected=state.selected,revision=state.revision;
  require(selected&&state.plan,'先检查适配并明确选择一个模式');
  require($('human-confirmed').checked&&$('ack-warnings').checked,'请先明确确认创作交接并阅读告警');
  const reviewer=string($('reviewer').value,120,'确认人',1),now=new Date(),day=now.toISOString().slice(0,10);
  const option=options(request,catalog,day).find(o=>o.profile_id===selected.profile_id&&o.mode_id===selected.mode_id);
  require(option?.compatible,'当前任务和模式不再兼容，请重新检查');
+ if($('quality-only').checked){const checked=await qualityPlan(request,catalog,day);require(checked.options.some(o=>o.compatible&&o.profile_id===selected.profile_id&&o.mode_id===selected.mode_id),'所选档不再属于绑定的质量名单，请重新检查');require(revision===state.revision,'检查期间任务变化，请重新确认');}
  for(const a of request.assets)require(state.files.has(a.sha256),'缺少实际素材文件：'+a.path);
- state.busy=true;$('export-bundle').disabled=true;
- try{
   let proof=null;
   if(request.stage==='final'){
    require(window.ManjuReview,'本版本没有审片证据检查器，拒绝仅靠哈希声明导出定稿');
@@ -2122,6 +2818,36 @@ chooseValue('resolution','720p');chooseValue('ratio','16:9');
 try{const saved=localStorage.getItem(STORE);if(saved&&saved.length<=2*1024*1024){const draft=JSON.parse(saved);require(draft.version===1&&draft.form,'不支持的草稿');for(const[id,v]of Object.entries(draft.form)){require(['shot-id','task','prompt','duration','resolution','ratio','preserve','change','reviewer'].includes(id)&&typeof v==='string'&&v.length<=30000,'草稿字段无效');chooseValue(id,v);}require(Array.isArray(draft.assets)&&draft.assets.length<=32,'草稿素材无效');state.assets=draft.assets.map(normalizeAsset);state.stage=draft.stage==='final'?'final':'draft';state.draftHash=hashPattern.test(draft.draftHash||'')?draft.draftHash:null;state.sourceContext=draft.sourceContext||null;showContext();renderAssets();status('已恢复浏览器中的任务草稿。没有恢复媒体字节，请重新绑定原文件。');}}catch{$('storage-note').textContent='未恢复旧草稿。请使用已经导出的 JSON；当前页面仍可正常工作。';}
 // The same pure functions are exposed for cross-language parity tests; no remote hook.
 window.ManjuWorkbench={SHA256,normalizeRequest,normalizeCatalog,modeReport,options,canonical,hash,crc32,zipStore,brief,getRequest,state,roleNames:ROLE_NAMES,element,status,handled,inspectFile,download,jsonBytes,fillRequest,invalidate,persist,renderAssets,importRequest,catalog:()=>catalog};
+// Quality preference is a separate, immutable evidence overlay. It never changes
+// Request/v1, old catalogs, or a historical approval on disk.
+const qualityPolicy=JSON.parse($('builtin-quality').textContent);
+async function qualityPlan(request,cat,day=new Date().toISOString().slice(0,10)){
+ const entries=new Map(qualityPolicy.entries.map(e=>[e.profile_id,e]));
+ const eligible=[],excluded=[];
+ for(const option of options(request,cat,day)){
+  const entry=entries.get(option.profile_id),profile=cat.profiles.find(p=>p.id===option.profile_id);let reason=null;
+  if(!entry)reason='not_in_quality_shortlist';
+  else if(!entry.tasks.includes(request.task))reason='task_not_in_quality_shortlist';
+  else if(await hash(profile)!==entry.profile_sha256)reason='profile_changed_requires_quality_recheck';
+  else if(day<qualityPolicy.checked_on)reason='quality_evidence_date_in_future';
+  if(reason)excluded.push({profile_id:option.profile_id,mode_id:option.mode_id,reason});
+  else{
+   const warnings=[...option.warnings,'quality_shortlist_is_not_per_shot_proof'];
+   if(day>qualityPolicy.review_after)warnings.push('quality_evidence_review_overdue');
+   if(entry.basis==='official_successor_family_evidence')warnings.push('leaderboard_score_not_verified_for_exact_successor');
+   eligible.push({...option,warnings:[...new Set(warnings)].sort(),quality_basis:entry.basis,quality_note:entry.note});
+  }
+ }
+ return {schema_id:'manju.quality-plan/v1',request_sha256:await hash(request),catalog_sha256:await hash(cat),shortlist_sha256:await hash(qualityPolicy),evaluated_on:day,selected_profile:null,automatic_fallback:false,cost_ranked:false,ranked_by_quality:false,options:eligible,excluded,limits:qualityPolicy.limits};
+}
+$('quality-only').addEventListener('change',()=>{invalidate();status($('quality-only').checked?'已回到质量优先名单；请重新检查与选择。':'已进入历史兼容视图，不表示这些型号仍属顶尖。不会自动选择。');});
+$('export-quality').addEventListener('click',handled(async()=>{
+ const request=getRequest(),before=state.revision,report=await qualityPlan(request,catalog);require(before===state.revision,'任务变化，请重新保存依据');
+ download(new Blob([jsonBytes({schema_id:'manju.quality-evidence-export/v1',shortlist:qualityPolicy,report})],{type:'application/json'}),'MANJU_QUALITY_'+report.request_sha256.slice(0,12)+'.json');
+ status('已触发质量名单与筛选依据下载；未选型号、未调用生成、未修改任务。');
+}));
+window.ManjuQuality={qualityPlan,policy:()=>JSON.parse(JSON.stringify(qualityPolicy))};
+
 // Local review records are declarations, not identity signatures or automatic edits.
 const reviewState={document:null,files:new Map(),pending:[],urls:[],reveal:false,busy:false,revision:0,formRevision:0,dirty:false};
 const CRITERIA=['identity','motion','camera','continuity','audio','artifacts','prompt_adherence'];
@@ -2228,7 +2954,7 @@ async function buildWorkspace() {
  return {document:doc,blob:zipStore(entries)};
 }
 async function storedZipMembers(blob,profile='workspace') {
- require(['workspace','repair'].includes(profile),'未知 ZIP 配置');
+ require(['workspace','repair','director'].includes(profile),'未知 ZIP 配置');
  require(blob&&blob.size>=22&&blob.size<=MAX_TOTAL+4*1024*1024,'工作现场 ZIP 为空或超过大小上限');
  const end=new DataView(await blob.slice(blob.size-22).arrayBuffer());
  require(end.getUint32(0,true)===0x06054b50&&end.getUint16(4,true)===0&&end.getUint16(6,true)===0&&end.getUint16(20,true)===0,'只读取本工具导出的无注释 ZIP');
@@ -2241,7 +2967,7 @@ async function storedZipMembers(blob,profile='workspace') {
   const flags=view.getUint16(cursor+8,true),method=view.getUint16(cursor+10,true),crc=view.getUint32(cursor+16,true),packed=view.getUint32(cursor+20,true),size=view.getUint32(cursor+24,true),n=view.getUint16(cursor+28,true),extra=view.getUint16(cursor+30,true),comment=view.getUint16(cursor+32,true),offset=view.getUint32(cursor+42,true);
   require(n>0&&n<=240&&cursor+46+n<=length&&!extra&&!comment&&view.getUint16(cursor+34,true)===0,'ZIP 路径或额外字段无效');
   const name=decoder.decode(bytes.subarray(cursor+46,cursor+46+n));safePath(name);
-  require(profile==='workspace'?(name==='WORKSPACE.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):(['PLAN.json','BRIEF.md','MANIFEST.json'].includes(name)||/^source\/[a-f0-9]{64}\.(mp4|mov|webm|mkv)$/.test(name)),'ZIP 包含未允许的路径');
+  require(profile==='workspace'?(name==='WORKSPACE.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):(['PLAN.json','BRIEF.md','MANIFEST.json'].includes(name)||/^source\/[a-f0-9]{64}\.(mp4|mov|webm|mkv)$/.test(name)||(profile==='director'&&/^(frames|guides)\/[a-f0-9]{64}\.png$/.test(name))),'ZIP 包含未允许的路径');
   require(!entries.has(name)&&!(flags&~0x800)&&method===0&&packed===size&&size>0&&size<=(name.endsWith('.json')?2*1024*1024:MAX_FILE),'ZIP 重复、压缩、加密或大小不符合工作现场格式');
   require((view.getUint32(cursor+38,true)>>>16&0xf000)!==0xa000,'不接受链接');
   require(offset===localEnd&&offset+30+n+size<=start,'ZIP 数据重叠、缺口或越界');
@@ -2486,6 +3212,76 @@ $('repair-import').addEventListener('change',handled(async e=>{const file=e.targ
  try{const result=await readRepair(file);require(rev===repairState.revision,'核验期间返工区发生变化，未替换');require(confirm('返工包已核验。替换当前返工区？请先保存当前返工。上方任务和磁盘工程不会改变。'),'保留当前返工区');applyRepair(result);}finally{repairState.busy=false;e.target.value='';}}));
 window.addEventListener('beforeunload',event=>{if(repairState.dirty){event.preventDefault();event.returnValue='';}});
 window.ManjuRepair={normalizeRepair,contextWindow:repairWindow,brief:repairBrief,build:repairBundle,read:readRepair,apply:applyRepair,state:repairState};
+
+// A separately saved director document; it never mutates request/review v1.
+const DIRECTOR_FORM=['director-shot','director-audio','director-preserve','director-change'];
+const DIRECTOR_KEYS=['schema_id','shot_id','source','source_role','anchors','preserve','change','audio_policy','delivery_status','execution_authorized','automatic_selection','plan_sha256'];
+const ANCHOR_KEYS=['id','source_time_ms','frame','guide','target','capture_method','time_basis'];
+const RASTER_KEYS=['sha256','bytes','width','height','filename'];
+const MAX_RASTER=32*1024*1024,MAX_DIRECTOR_PIXELS=33554432;
+const directorState={source:null,entry:null,anchors:[],files:new Map(),busy:false,revision:0,dirty:false,url:null,previews:[]};
+function directorNotice(text,error=false){$('director-status').textContent=text;$('director-status').classList.toggle('reason',error);}
+function directorChanged(){directorState.revision++;directorState.dirty=true;}
+function directorRaster(value){
+ exactKeys(value,RASTER_KEYS,'锚点 PNG');require(hashPattern.test(value.sha256),'PNG 哈希无效');integer(value.bytes,1,MAX_RASTER,'PNG 字节');integer(value.width,1,8192,'PNG 宽');integer(value.height,1,8192,'PNG 高');require(value.width*value.height<=MAX_DIRECTOR_PIXELS,'PNG 超过本地像素上限，不自动缩小');
+ require(typeof value.filename==='string'&&value.filename.length<=240,'PNG 文件名无效');safePath(value.filename);require(!value.filename.includes('/')&&extension(value.filename)==='.png','只允许平面文件名的 PNG');return clone(value);
+}
+function directorSourceName(p){return 'source/'+p.source.sha256+extension(p.source.filename);}
+function directorRasterName(r,kind){return kind+'/'+r.sha256+'.png';}
+function directorMedia(p){const records=new Map([[directorSourceName(p),p.source]]);for(const a of p.anchors)for(const[k,r]of [['frames',a.frame],['guides',a.guide]])if(r){const name=directorRasterName(r,k),old=records.get(name);if(old)for(const key of ['sha256','bytes','width','height'])require(old[key]===r[key],'同一素材身份的元数据冲突');records.set(name,r);}return records;}
+async function normalizeDirector(p){
+ exactKeys(p,DIRECTOR_KEYS,'导演材料');require(p.schema_id==='manju.director-plan/v1','未知导演格式');require(string(p.shot_id,120,'镜头编号',1)===p.shot_id,'镜头编号需去首尾空格');
+ const source=candidateValue(p.source);require(canonical(source)===canonical(p.source)&&source.media_check!=='hash_only'&&source.duration_ms!==null&&source.bytes<=MAX_FILE,'需要已测量的实际原片');
+ require(p.source_role==='motion_timing_camera_reference_not_final_look'&&p.delivery_status==='draft_reference_only'&&p.execution_authorized===false&&p.automatic_selection===false,'导演材料不能授权执行或选片');
+ require(['preserve_original','needs_manual_review'].includes(p.audio_policy),'声音处理无效');require(Array.isArray(p.anchors)&&p.anchors.length>=1&&p.anchors.length<=16,'需要 1 至 16 个锚点');
+ let previous=-1;const ids=new Set();for(const a of p.anchors){exactKeys(a,ANCHOR_KEYS,'时间锚点');require(/^A\d{2}$/.test(a.id)&&!ids.has(a.id),'锚点 ID 无效或重复');ids.add(a.id);integer(a.source_time_ms,0,86400000,'锚点毫秒');require(a.source_time_ms>previous&&a.source_time_ms<source.duration_ms,'锚点时间必须唯一递增且在原片内');previous=a.source_time_ms;
+ const frame=directorRaster(a.frame);require(frame.width===source.width&&frame.height===source.height,'原帧像素与原片显示栅格不同');if(a.guide!==null){const guide=directorRaster(a.guide);require(guide.width*frame.height===frame.width*guide.height,'目标图与原帧画幅不同，不自动拉伸或裁切');}
+ require(typeof a.target==='string'&&a.target.length<=4000,'目标文字最多 4000 字');require(a.capture_method==='browser_canvas_sdr_reference'&&a.time_basis==='presentation_time_not_certified_frame_index','不能冒称 HDR 母版或精确帧编号');}
+ for(const key of ['preserve','change']){require(Array.isArray(p[key])&&p[key].length<=30,'最多 30 条要求');for(const s of p[key])require(typeof s==='string'&&s===s.trim()&&s.length>=1&&s.length<=2000,'要求必须是去空格的 1 至 2000 字文本');}
+ const kept=new Set(p.preserve.map(casefold));require(!p.change.some(s=>kept.has(casefold(s))),'同一要求不能既保留又改变');require([...directorMedia(p).values()].reduce((n,r)=>n+r.bytes,0)<=MAX_TOTAL,'导演材料超过 512 MiB');
+ const body={...p};delete body.plan_sha256;require(await hash(body)===p.plan_sha256,'导演材料哈希不符');return clone(p);
+}
+function directorBrief(p){let lines=['# 导演锚点 / Motion-first reference pack','',`镜头：${p.shot_id}`,`原片：${directorSourceName(p)}`,`原片 SHA-256：${p.source.sha256}`,'原片用途：运动、表演时序与镜头参考，不等于最终画面外观。','','## 保留',...p.preserve.map(s=>'- '+s),'','## 改变',...p.change.map(s=>'- '+s),'',`声音策略：${p.audio_policy}`,'','## 时间锚点'];for(const a of p.anchors)lines.push(`### ${a.id} · ${a.source_time_ms} ms`,`原帧参考：${directorRasterName(a.frame,'frames')}`,`实际像素：${a.frame.width}×${a.frame.height}`,`目标图：${a.guide?directorRasterName(a.guide,'guides'):'未绑定，仍需外部制作'}`,'目标外观：'+(a.target||'尚未填写'),'');lines.push('## 使用边界','完整原视频字节保留。PNG 是浏览器 SDR 参考，不是 HDR、EXR 或高位深母版。','时间是相对原片的播放毫秒，不是已认证的逐帧编号；提交前在目标工具重新核对位置。','每张目标图说明该时刻应呈现的外观，不把提示词写成从原样到新样的变形剧情。','缺少目标图或文字的锚点仍会保存，不能据此认定已准备好生成。','本地最多 16 个锚点，不代表任何模型支持 16 个输入。能力与实际入口须另行检查。','本包是未批准的参考材料，不剪切、不上传、不生成、不授权付款或自动选片。','哈希只验证内容一致，不证明身份、版权或生成质量。','');return lines.join('\n');}
+async function directorPNG(file){
+ require(extension(file.name)==='.png'&&file.size<=MAX_RASTER,'请选择最多 32 MiB 的 PNG；不会转换或放大');const bytes=new Uint8Array(await file.arrayBuffer());require(bytes.length>=33&&[137,80,78,71,13,10,26,10].every((v,i)=>bytes[i]===v),'PNG 签名无效');const v=new DataView(bytes.buffer);let pos=8,width=null,height=null,dataSeen=false,ended=false;
+ while(pos+12<=bytes.length){const n=v.getUint32(pos),end=pos+12+n;require(end<=bytes.length,'PNG 块截断');const kind=String.fromCharCode(...bytes.subarray(pos+4,pos+8));require(crc32(bytes.subarray(pos+4,pos+8+n))===v.getUint32(end-4),'PNG 块 CRC 无效');if(width===null){require(kind==='IHDR'&&n===13,'PNG 缺少头');width=v.getUint32(pos+8);height=v.getUint32(pos+12);integer(width,1,8192,'像素宽');integer(height,1,8192,'像素高');require(width*height<=MAX_DIRECTOR_PIXELS,'PNG 超过本地像素限制');}else require(kind!=='IHDR','重复 PNG 头');if(kind==='IDAT')dataSeen=true;if(kind==='IEND'){require(n===0&&end===bytes.length,'PNG 尾部多余内容');ended=true;}pos=end;}
+ require(pos===bytes.length&&ended&&dataSeen,'PNG 结构不完整');const url=URL.createObjectURL(file),image=new Image();
+ try{await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{image.src='';reject(new Error('PNG 解码超时'));},10000);image.onload=()=>{clearTimeout(timer);resolve();};image.onerror=()=>{clearTimeout(timer);reject(new Error('PNG 无法解码'));};image.src=url;});require(image.naturalWidth===width&&image.naturalHeight===height,'实际解码像素不符');}finally{image.src='';URL.revokeObjectURL(url);}
+ const entry=await inspectFile(file);return {raster:directorRaster({sha256:entry.sha256,bytes:file.size,width,height,filename:file.name}),entry};
+}
+function directorView(){return {form:Object.fromEntries(DIRECTOR_FORM.map(id=>[id,$(id).value])),source:directorState.source,anchors:directorState.anchors};}
+async function directorPlan(){require(directorState.source&&directorState.entry,'先绑定运动底片');const body={schema_id:'manju.director-plan/v1',shot_id:$('director-shot').value.trim(),source:directorState.source,source_role:'motion_timing_camera_reference_not_final_look',anchors:clone(directorState.anchors).sort((a,b)=>a.source_time_ms-b.source_time_ms),preserve:$('director-preserve').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean),change:$('director-change').value.split(/\r?\n/).map(x=>x.trim()).filter(Boolean),audio_policy:$('director-audio').value,delivery_status:'draft_reference_only',execution_authorized:false,automatic_selection:false};body.plan_sha256=await hash(body);return normalizeDirector(body);}
+function directorPrune(){const needed=new Set();for(const a of directorState.anchors){needed.add(directorRasterName(a.frame,'frames'));if(a.guide)needed.add(directorRasterName(a.guide,'guides'));}for(const key of directorState.files.keys())if(!needed.has(key))directorState.files.delete(key);}
+function directorSourceView(){const video=$('director-video');video.pause();video.removeAttribute('src');if(directorState.url)URL.revokeObjectURL(directorState.url);directorState.url=null;video.hidden=!directorState.entry;if(directorState.entry){directorState.url=URL.createObjectURL(directorState.entry.file);video.src=directorState.url;video.load();const s=directorState.source;$('director-media-info').textContent=`${s.filename} · ${s.duration_ms/1000} 秒 · 显示像素 ${s.width}×${s.height}。SDR 参考截图不替代原视频或高位深母版。`;}}
+function directorRender(){for(const u of directorState.previews)URL.revokeObjectURL(u);directorState.previews=[];const root=$('director-anchors');root.replaceChildren();if(!directorState.anchors.length){root.append(element('div','尚未提取原帧。可先保存运动，再制作外观目标图。','empty'));return;}
+ for(const a of [...directorState.anchors].sort((x,y)=>x.source_time_ms-y.source_time_ms)){const card=element('div',null,'option');card.dataset.anchor=a.id;card.append(element('h3',`${a.id} · ${a.source_time_ms/1000} 秒 · ${a.frame.width}×${a.frame.height}`));const images=element('div',null,'formrow');for(const[k,r,title]of [['frames',a.frame,'原帧参考'],['guides',a.guide,'精修目标图']]){const box=element('div');box.append(element('p',title+(r?` · ${r.width}×${r.height}`:''),'hint'));if(r){const entry=directorState.files.get(directorRasterName(r,k));if(entry){const image=element('img');const url=URL.createObjectURL(entry.file);directorState.previews.push(url);image.src=url;image.alt=title;image.style='width:100%;max-height:230px;object-fit:contain';box.append(image);}}else box.append(element('p','尚未绑定','hint'));images.append(box);}card.append(images);
+ const target=element('textarea');target.maxLength=4000;target.rows=3;target.value=a.target;target.setAttribute('aria-label',a.id+' 目标外观');target.placeholder='只描述这个时刻的目标外观；把需要保持的表演和镜头交给原片。';target.addEventListener('input',()=>{a.target=target.value;directorChanged();});card.append(target);
+ const actions=element('div',null,'actions'),save=element('button','保存该原帧 PNG');save.addEventListener('click',handled(()=>{require(!directorState.busy,'导演文件操作中');const e=directorState.files.get(directorRasterName(a.frame,'frames'));download(e.file,`${a.id}_${a.source_time_ms}ms_${a.frame.width}x${a.frame.height}.png`);}));actions.append(save);
+ const label=element('label','绑定同画幅目标 PNG','filebtn'),input=element('input');input.type='file';input.accept='.png,image/png';input.className='hidden';input.setAttribute('aria-label',a.id+' 目标 PNG');label.append(input);input.addEventListener('change',handled(async e=>{const file=e.target.files[0];if(!file)return;require(!directorState.busy,'导演文件操作中');directorState.busy=true;const rev=directorState.revision;try{const result=await directorPNG(file);require(rev===directorState.revision&&directorState.anchors.includes(a),'读取期间导演材料变化，未替换');require(result.raster.width*a.frame.height===a.frame.width*result.raster.height,'目标图必须与原帧画幅相同；保留目标图实际分辨率，不自动拉伸或裁切');const total=directorState.entry.file.size+[...directorState.files.values()].reduce((n,v)=>n+v.file.size,0)+result.entry.file.size;require(total<=MAX_TOTAL,'导演素材总计超过 512 MiB');a.guide=result.raster;directorState.files.set(directorRasterName(a.guide,'guides'),result.entry);directorPrune();directorChanged();directorRender();directorNotice('目标 PNG 已绑定，原帧和原视频没有改变；尚未生成或批准。');}finally{directorState.busy=false;e.target.value='';}}));actions.append(label);
+ if(a.guide){const clear=element('button','移除目标图');clear.addEventListener('click',handled(()=>{require(!directorState.busy,'导演文件操作中');a.guide=null;directorPrune();directorChanged();directorRender();}));actions.append(clear);}const remove=element('button','移除此锚点');remove.addEventListener('click',handled(()=>{require(!directorState.busy,'导演文件操作中');directorState.anchors=directorState.anchors.filter(x=>x!==a);directorPrune();directorChanged();directorRender();}));actions.append(remove);card.append(actions);root.append(card);}}
+async function directorCapture(){
+ require(!directorState.busy,'导演文件操作中');require(directorState.source&&directorState.entry,'先选择底片');require(directorState.anchors.length<16,'最多 16 个锚点，请移除不需要的锚点');directorState.busy=true;const rev=directorState.revision,video=$('director-video');
+ try{require(video.readyState>=2&&!video.seeking&&!video.ended,'等待当前画面解码完成，或拖动到片段结束之前');video.pause();const time=Math.round(video.currentTime*1000);require(time<directorState.source.duration_ms&&!directorState.anchors.some(a=>a.source_time_ms===time),'这个时刻已存在，或超出原片');const w=video.videoWidth,h=video.videoHeight;require(w===directorState.source.width&&h===directorState.source.height&&w<=8192&&h<=8192&&w*h<=MAX_DIRECTOR_PIXELS,'原片显示像素不同或超过截图限制，不自动缩小');
+ const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const context=canvas.getContext('2d',{alpha:false,colorSpace:'srgb'});require(context,'浏览器不支持本地画布');context.drawImage(video,0,0,w,h);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));canvas.width=canvas.height=1;require(blob,'PNG 导出失败');const result=await directorPNG(new File([blob],`frame_${time}ms.png`,{type:'image/png'}));require(rev===directorState.revision,'截取期间导演材料变化，请重试');require(directorState.entry.file.size+[...directorState.files.values()].reduce((n,e)=>n+e.file.size,0)+result.entry.file.size<=MAX_TOTAL,'导演素材超过 512 MiB');let id=1;while(directorState.anchors.some(a=>a.id==='A'+String(id).padStart(2,'0')))id++;
+ const anchor={id:'A'+String(id).padStart(2,'0'),source_time_ms:time,frame:result.raster,guide:null,target:'',capture_method:'browser_canvas_sdr_reference',time_basis:'presentation_time_not_certified_frame_index'};directorState.anchors.push(anchor);directorState.files.set(directorRasterName(anchor.frame,'frames'),result.entry);directorChanged();directorRender();directorNotice(`已提取 ${time/1000} 秒的 ${w}×${h} SDR 原尺寸参考图。可保存原帧到外部图像工具精修，再绑定目标图。`);
+ }finally{directorState.busy=false;}}
+async function directorBundle(){const rev=directorState.revision,before=canonical(directorView()),plan=await directorPlan();const records=directorMedia(plan),files={},entries=[];
+ for(const[name,data]of [['PLAN.json',jsonBytes(plan)],['BRIEF.md',encoder.encode(directorBrief(plan))]]){require(data.length<=2*1024*1024,'导演文字超过上限');entries.push({name,data,crc:crc32(data)});files[name]=await hash(data);}
+ for(const [name,r]of [...records].sort((a,b)=>a[0].localeCompare(b[0]))){const entry=name.startsWith('source/')?directorState.entry:directorState.files.get(name);require(entry,'缺少实际导演素材：'+name);const fresh=await inspectFile(entry.file);require(fresh.sha256===r.sha256&&fresh.file.size===r.bytes,'导演文件与计划不符');entries.push({name,data:fresh.file,crc:fresh.crc});files[name]=fresh.sha256;}
+ const data=jsonBytes({schema_id:'manju.director-manifest/v1',files});entries.push({name:'MANIFEST.json',data,crc:crc32(data)});require(rev===directorState.revision&&before===canonical(directorView()),'导出期间导演材料变化，请重新保存');return {plan,blob:zipStore(entries)};}
+async function readDirector(blob){const entries=await storedZipMembers(blob,'director');require(entries.size>=5&&entries.size<=36,'导演包条目数无效');for(const name of ['PLAN.json','BRIEF.md','MANIFEST.json'])require(entries.has(name)&&entries.get(name).size<=2*1024*1024,'导演元数据缺少或过大');
+ const parse=async name=>{const e=entries.get(name),b=new Uint8Array(await e.data.arrayBuffer());require(crc32(b)===e.crc,'导演元数据 CRC 不符');return strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(b));};const plan=await normalizeDirector(await parse('PLAN.json')),manifest=await parse('MANIFEST.json'),records=directorMedia(plan);exactKeys(manifest,['schema_id','files'],'导演清单');require(manifest.schema_id==='manju.director-manifest/v1','导演清单格式无效');const names=['PLAN.json','BRIEF.md',...records.keys()];exactKeys(manifest.files,names,'导演文件集合');require(entries.size===names.length+1&&names.every(n=>entries.has(n)),'导演包必须恰好包含所有被引用文件');
+ const media=new Map();let sourceEntry;for(const name of names){const e=entries.get(name),record=records.get(name),file=new File([e.data],record?record.filename:name,{type:name.endsWith('.png')?'image/png':(name.startsWith('source/')?({'.mp4':'video/mp4','.webm':'video/webm','.mov':'video/quicktime','.mkv':'video/x-matroska'}[extension(plan.source.filename)]):'application/octet-stream')});const fresh=await inspectFile(file);require(fresh.crc===e.crc&&fresh.sha256===manifest.files[name],'导演文件 CRC 或 SHA-256 不符：'+name);if(record){require(fresh.sha256===record.sha256&&file.size===record.bytes,'实际素材与导演计划不同');if(name.startsWith('source/'))sourceEntry=fresh;else{const png=await directorPNG(file);require(png.raster.width===record.width&&png.raster.height===record.height,'PNG 实际像素与计划不同');media.set(name,fresh);}}}
+ require(await entries.get('BRIEF.md').data.text()===directorBrief(plan),'导演说明与计划不一致');const measured=await measuredCandidate(sourceEntry.file,sourceEntry);require(['duration_ms','width','height'].every(k=>measured[k]===plan.source[k]),'原片实际元数据与导演包不符，未替换；可用独立核验器检查原包');return {plan,entry:sourceEntry,files:media,source_metadata_remeasured:true};}
+function applyDirector(result){const p=result.plan;directorState.source=clone(p.source);directorState.entry=result.entry;directorState.anchors=clone(p.anchors);directorState.files=result.files;$('director-shot').value=p.shot_id;$('director-audio').value=p.audio_policy;$('director-preserve').value=p.preserve.join('\n');$('director-change').value=p.change.join('\n');directorChanged();directorState.dirty=false;directorSourceView();directorRender();$('director-brief').textContent=directorBrief(p);directorNotice('原片、锚点和目标图已恢复。仍是未批准的参考材料；上方任务、审片和返工区没有改变。');}
+for(const id of DIRECTOR_FORM)$(id).addEventListener('input',directorChanged);
+$('director-source').addEventListener('change',handled(async e=>{const file=e.target.files[0];if(!file)return;require(!directorState.busy,'导演文件操作中');directorState.busy=true;const rev=directorState.revision;try{require(VIDEO_EXTS.includes(extension(file.name)),'请选择实际视频');const entry=await inspectFile(file),source=await measuredCandidate(file,entry);require(rev===directorState.revision,'读取期间导演区变化，请重试');if(directorState.anchors.length)require(confirm('更换底片会清空当前锚点。已保存导演 ZIP 吗？'),'保留当前底片');directorState.source=source;directorState.entry=entry;directorState.anchors=[];directorState.files=new Map();directorChanged();directorSourceView();directorRender();directorNotice('底片已在本机绑定。暂停到重要时刻，提取原帧。');}finally{directorState.busy=false;e.target.value='';}}));
+$('director-capture').addEventListener('click',handled(directorCapture));
+$('director-export').addEventListener('click',handled(async()=>{require(!directorState.busy,'导演文件操作中');directorState.busy=true;try{const{plan,blob}=await directorBundle();download(blob,'MANJU_DIRECTOR_'+plan.plan_sha256.slice(0,12)+'.zip');$('director-brief').textContent=directorBrief(plan);directorState.dirty=false;directorNotice('已触发导演 ZIP 下载，包含真实原片、原帧和目标图。请确认文件已保存；没有执行生成。');}finally{directorState.busy=false;}}));
+$('director-import').addEventListener('change',handled(async e=>{const file=e.target.files[0];if(!file)return;require(!directorState.busy,'导演文件操作中');directorState.busy=true;const rev=directorState.revision;try{const result=await readDirector(file);require(rev===directorState.revision,'核验期间导演区变化，未替换');require(confirm('导演包已核验。替换当前导演区？上方任务、审片和返工区保持不变。'),'保留当前导演材料');applyDirector(result);}finally{directorState.busy=false;e.target.value='';}}));
+$('director-reset').addEventListener('click',handled(()=>{require(!directorState.busy,'导演文件操作中');require(confirm('清空当前导演区？不会删除磁盘文件。请先保存所需导演 ZIP。'),'保留当前导演区');directorState.source=null;directorState.entry=null;directorState.anchors=[];directorState.files=new Map();directorChanged();directorState.dirty=false;directorSourceView();directorRender();$('director-brief').textContent='';directorNotice('导演区已清空；原文件未删除。');}));
+window.addEventListener('beforeunload',e=>{if(directorState.dirty){e.preventDefault();e.returnValue='';}});
+window.ManjuDirector={state:directorState,normalizeDirector,brief:directorBrief,build:directorBundle,read:readDirector,apply:applyDirector,png:directorPNG,capture:directorCapture,plan:directorPlan};
 
 })();
 </script>

@@ -15,8 +15,8 @@ before={a.path:file_digest(root/a.path) for a in assets}
 verified=verify_bundle(path)
 # Use the actual top-level CLI, not only a directly imported Typer group.
 cli=subprocess.run([sys.executable,'-m','manju','models','verify',str(path)],text=True,capture_output=True,timeout=30,check=True)
-(root/'cli.log').write_text(cli.stdout+cli.stderr)
-copy=root/'tampered-handoff';shutil.copytree(path,copy);(copy/'BRIEF.md').write_text('changed')
+(root/'cli.log').write_text(cli.stdout+cli.stderr, encoding='utf-8')
+copy=root/'tampered-handoff';shutil.copytree(path,copy);(copy/'BRIEF.md').write_text('changed', encoding='utf-8')
 try:verify_bundle(copy)
 except AuthoringError:tamper_rejected=True
 else:raise AssertionError('tamper accepted')

@@ -79,15 +79,16 @@ def test_whole_report_browser_python_parity(page,when):
 
 
 def test_cli_new_report_is_read_only_and_exclusive(tmp_path):
-    after=tmp_path/'after.json';after.write_text(load_catalog().model_dump_json())
-    req=tmp_path/'request.json';req.write_text(request().model_dump_json());out=tmp_path/'report.json'
+    after=tmp_path/'after.json';after.write_text(load_catalog().model_dump_json(), encoding='utf-8')
+    req=tmp_path/'request.json';req.write_text(request().model_dump_json(), encoding='utf-8');out=tmp_path/'report.json'
     runner=CliRunner();args=['catalog-review',str(OLD),str(after),'--request',str(req),'--on','2026-09-06','--output',str(out)]
     result=runner.invoke(app,args);assert result.exit_code==0,result.stdout
-    assert json.loads(out.read_text())==review_catalog(load_catalog(OLD),load_catalog(),request(),today=DAY)
+    assert json.loads(out.read_text(encoding='utf-8'))==review_catalog(load_catalog(OLD),load_catalog(),request(),today=DAY)
     assert runner.invoke(app,args).exit_code==2
 
 
 def test_import_is_staged_apply_clears_confirmation_and_revert_previews(page,tmp_path):
+    page.locator('#quality-only').uncheck()  # Explicit historical compatibility view.
     page.locator('#prompt').fill('当前镜头文字不能改');page.locator('#check-plan').click()
     page.get_by_role('radio',name='Veo 3.1 Preview text',exact=True).check();page.locator('#human-confirmed').check()
     base=page.evaluate('ManjuWorkbench.catalog().revision')
@@ -141,7 +142,7 @@ def test_strict_json_matches_json_data(page,value):
 
 
 def test_duplicate_catalog_does_not_change_state(page,tmp_path):
-    value=tmp_path/'duplicate.json';data=load_catalog().model_dump_json();value.write_text(data.replace('"revision":','"revision":"ignored", "revision":',1))
+    value=tmp_path/'duplicate.json';data=load_catalog().model_dump_json();value.write_text(data.replace('"revision":','"revision":"ignored", "revision":',1), encoding='utf-8')
     before=page.evaluate('ManjuWorkbench.catalog().revision')
     page.locator('#import-catalog').set_input_files(value);expect(page.locator('#status')).to_contain_text('重复字段')
     assert page.evaluate('ManjuWorkbench.catalog().revision')==before

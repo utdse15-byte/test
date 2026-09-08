@@ -141,18 +141,18 @@ def test_asset_changed_refuses_output(tmp_path):
 def test_tampering(tmp_path,attack):
     r,c,a,out=make_bundle(tmp_path)
     if attack=='bytes':(out/'assets/首帧.png').write_bytes(b'changed')
-    if attack=='extra':(out/'extra.txt').write_text('x')
+    if attack=='extra':(out/'extra.txt').write_text('x', encoding='utf-8')
     if attack.endswith('_rehash'):
-        p=out/('BRIEF.md' if attack=='brief_rehash' else 'assets/首帧.png');p.write_text('forged')
+        p=out/('BRIEF.md' if attack=='brief_rehash' else 'assets/首帧.png');p.write_text('forged', encoding='utf-8')
         manifest=load_json(out/'MANIFEST.json');manifest['files'][p.relative_to(out).as_posix()]=file_digest(p)
-        (out/'MANIFEST.json').write_text(json.dumps(manifest))
+        (out/'MANIFEST.json').write_text(json.dumps(manifest), encoding='utf-8')
     if attack=='symlink':
         (out/'assets/首帧.png').unlink();(out/'assets/首帧.png').symlink_to(tmp_path/'首帧.png')
     with pytest.raises(AuthoringError):verify_bundle(out)
 
 def test_json_duplicate_nonfinite(tmp_path):
     for text in ['{"x":1,"x":2}','{"x":NaN}']:
-        p=tmp_path/'a.json';p.write_text(text)
+        p=tmp_path/'a.json';p.write_text(text, encoding='utf-8')
         with pytest.raises(AuthoringError):load_json(p)
 
 def test_cli_real_cycle_and_exclusive_output(tmp_path):

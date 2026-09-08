@@ -35,7 +35,7 @@ try:
   page.wait_for_function('()=>document.getElementById("shot-id").value==="S001"')
   with page.expect_download() as event:page.locator('#export-request').click()
   exported=root/'browser-exported-request.json';event.value.save_as(exported)
-  value=json.loads(exported.read_text());request=Request.model_validate(value.get('request',value))
+  value=json.loads(exported.read_text(encoding='utf-8'));request=Request.model_validate(value.get('request',value))
   assert digest(request)==digest(original)
   page.screenshot(path=str(root/'project-tools-desktop.png'),full_page=True)
   page.set_viewport_size({'width':390,'height':844});page.screenshot(path=str(root/'project-tools-mobile.png'),full_page=True)
@@ -49,6 +49,6 @@ try:
     'native_navigation_tested':False,'transport':'real local HTTP followed by isolated browser document',
     'commercial_api_calls':0,'automatic_selection_or_approval':False}
   assert report['runtime_from_isolated_install'] and report['project_files_unchanged']
-  (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2));print(json.dumps(report,ensure_ascii=False,indent=2));browser.close()
+  (root/'RESULT.json').write_text(json.dumps(report,ensure_ascii=False,indent=2), encoding='utf-8');print(json.dumps(report,ensure_ascii=False,indent=2));browser.close()
 finally:
  server.shutdown();server.close();thread.join(timeout=5)
