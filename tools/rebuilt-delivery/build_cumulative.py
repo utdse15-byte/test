@@ -39,7 +39,7 @@ def publish_new(source: Path, destination: Path) -> None:
         raise
 
 
-def build(repo: Path, output: Path, evidence: Path) -> dict:
+def build(repo: Path, output: Path, evidence: Path, *, maintenance_reports: Path | None = None) -> dict:
     if output.exists() or output.is_symlink():
         raise FileExistsError('Existing downloads are never overwritten')
     receipt_path = output.with_suffix('.receipt.json')
@@ -88,6 +88,10 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
                                   (f'{stage}_INTERCHANGE_MATRIX.md','INTERCHANGE_GUIDE.md')]:
             report = repo/'REPORTS/continuation'/name
             if report.is_file():shutil.copy2(report,root/target_name)
+        # The maintenance wrapper supplies current reports, without rewriting historical reports.
+        if maintenance_reports is not None:
+            for name in ('VALIDATION.md', 'PROJECT_REVIEW.md'):
+                shutil.copy2(maintenance_reports/name, root/name)
         intro=(repo/'tools/delivery/QUICKSTART_ZH.md').read_text(encoding='utf-8').replace('R7',stage)
         if int(stage[1:]) < 13:
             intro += ('\n\n## 本轮工作现场与模型回收\n'

@@ -45,17 +45,23 @@
     for(let i=0;i<blob.size;i+=1024*1024)h.update(new Uint8Array(await blob.slice(i,i+1024*1024).arrayBuffer()));
     return h.hex();
   }
-  async function request(path, options={}) {
-    const controller=new AbortController(), timer=setTimeout(()=>controller.abort(),180000);
-    try {
+  async function request(path, options={}, format='json') {
+    // Own the complete body read, not only HTTP headers. A stalled response must
+    // release busy state and never become a successful save after a timeout.
+    const controller=new AbortController();let timer;
+    const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{
+      controller.abort();reject(new Error('本机响应超时，未确认完成；服务可能已经写入，请重新查看恢复点'));
+    },cfg.request_timeout_ms||180000);});
+    const operation=(async()=>{
       const response=await fetch(cfg.base+path,{...options,cache:'no-store',redirect:'error',credentials:'same-origin',signal:controller.signal,
         headers:{'X-Manju-Token':cfg.token,...options.headers}});
       if(!response.ok){const payload=await response.json().catch(()=>({}));throw new Error(payload.error||'本机服务未完成请求');}
-      return response;
-    } finally { clearTimeout(timer); }
+      return await (format==='blob'?response.blob():response.json());
+    })();
+    try{return await Promise.race([operation,timeout]);}finally{clearTimeout(timer);}
   }
   async function refresh(open=false) {
-    const data=await (await request('points')).json();
+    const data=await request('points');
     const prior=$('continue-choice').value;local.points=data.points;
     $('continue-choice').replaceChildren(...data.points.map(p=>{
       const o=document.createElement('option');o.value=p.id;
@@ -83,8 +89,8 @@
       const sha=await hashBlob(built.blob);
       if(initial!==fingerprint())throw new Error('写入前工作已经变化，本次未上传旧现场；停笔后重试。');
       if(automatic&&!$('continue-auto').checked){note('自动续作已关闭，本次尚未上传的现场没有写入。已有恢复点保留。');return;}
-      const result=await (await request('points',{method:'POST',body:built.blob,headers:{'Content-Type':'application/zip',
-        'X-Manju-Window':windowId,'X-Manju-Sequence':String(++local.sequence),'X-Manju-Sha256':sha}})).json();
+      const result=await request('points',{method:'POST',body:built.blob,headers:{'Content-Type':'application/zip',
+        'X-Manju-Window':windowId,'X-Manju-Sequence':String(++local.sequence),'X-Manju-Sha256':sha}});
       if(result.point.sha256!==sha||result.point.bytes!==built.blob.size)throw new Error('服务回执与实际收工包不一致；未标记成功。');
       local.last=initial;local.lastPoint=result.point;
       note(initial===fingerprint()?`已写入并核对本机恢复点 · ${new Date(result.point.created_utc).toLocaleTimeString()}。这不是独立下载备份。`:
@@ -99,7 +105,7 @@
     }
   }
   async function fetchPoint(record) {
-    const response=await request('points/'+record.id), blob=await response.blob();
+    const blob=await request('points/'+record.id,{},'blob');
     if(blob.size!==record.bytes||await hashBlob(blob)!==record.sha256)throw new Error('读取的实际字节与所选恢复点不符；当前工作未改变。');
     return blob;
   }
@@ -135,7 +141,7 @@
   $('continue-clean').addEventListener('click',async()=>{
     if(local.busy||!confirm('仅清理中断后尚未发布的临时写入？已完成恢复点和当前页面不变。'))return;
     local.busy=true;syncButtons();
-    try{const data=await (await request('cleanup',{method:'POST',body:''})).json();await refresh(true);note('已清理 '+data.removed+' 个未完成写入目录。');}
+    try{const data=await request('cleanup',{method:'POST',body:''});await refresh(true);note('已清理 '+data.removed+' 个未完成写入目录。');}
     catch(e){note('未清理：'+e.message,true);}finally{local.busy=false;syncButtons();}
   });
   $('continue-auto').addEventListener('change',()=>{

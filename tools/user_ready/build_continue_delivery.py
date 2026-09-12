@@ -83,46 +83,50 @@ def build(repo, destination, evidence, example):
     expected=json.loads((evidence/'tested-source-hashes.json').read_text())
     if not expected or any(sha(repo/name)!=value for name,value in expected.items()):
         raise ValueError('Source changed after the terminal tests')
-    for name in ['source-release','installed-release']:
+    for name in ['source-release','installed-release','source-relink','installed-relink']:
         if not json.loads((evidence/name/'RESULT.json').read_text())['ok']:
             raise ValueError('Missing source/installed media rehearsal')
+    a=json.loads((evidence/'source-relink/RESULT.json').read_text())
+    b=json.loads((evidence/'installed-relink/RESULT.json').read_text())
+    if a['source_bytes_hash']!=b['source_bytes_hash']:
+        raise ValueError('Source and installed reconnect exports differ')
     core=module(repo/'tools/rebuilt-delivery/build_cumulative.py','cumulative_delivery')
     fragment=module(repo/'tools/user_ready/download_parts.py','fragment_delivery')
     version=json.loads((repo/'DELIVERY_VERSION.json').read_text())['version']
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo,text=True).strip()
     with tempfile.TemporaryDirectory(prefix='manju-final-build-',dir=destination.parent) as td:
-        temp=Path(td);raw=temp/'core.zip';core_receipt=core.build(repo,raw,evidence)
+        temp=Path(td);raw=temp/'core.zip';core_receipt=core.build(repo,raw,evidence,maintenance_reports=repo/'REPORTS/media-relink')
         core_root=temp/'core-unpacked'
         with zipfile.ZipFile(raw) as z:z.extractall(core_root)
         app=next(core_root.iterdir())
-        full_root=temp/'MANJU_CONTINUE';full_root.mkdir();shutil.copytree(app,full_root/'APP')
+        full_root=temp/'MANJU_RELINK';full_root.mkdir();shutil.copytree(app,full_root/'APP')
         common(repo,full_root,example)
         shutil.copy2(repo/'tools/user_ready/DIAGNOSE_WINDOWS.cmd',full_root/'DIAGNOSE_WINDOWS.cmd')
         (full_root/'HANDOFF').mkdir()
         latest=max(repo.glob('PROJECT_STATE_*.md'),key=lambda p:p.name)
         shutil.copy2(latest,full_root/'HANDOFF'/latest.name)
-        for source in repo.glob('TASK_本机续作_*.md'):shutil.copy2(source,full_root/'HANDOFF'/source.name)
+        for source in repo.glob('TASK_素材找回_*.md'):shutil.copy2(source,full_root/'HANDOFF'/source.name)
         for filename in ['VALIDATION.md','PROJECT_REVIEW.md']:
-            shutil.copy2(repo/'REPORTS/local-continuation'/filename,full_root/filename)
+            shutil.copy2(repo/'REPORTS/media-relink'/filename,full_root/filename)
         full_check=inventory(full_root,version,head)
-        full=temp/'MANJU_CONTINUE_FULL.zip';zip_tree(full_root,full)
-        start_root=temp/'MANJU_CONTINUE_START';common(repo,start_root,example)
+        full=temp/'MANJU_RELINK_FULL.zip';zip_tree(full_root,full)
+        start_root=temp/'MANJU_RELINK_START';common(repo,start_root,example)
         start_check=inventory(start_root,version,head)
-        start=temp/'MANJU_CONTINUE_START.zip';zip_tree(start_root,start)
+        start=temp/'MANJU_RELINK_START.zip';zip_tree(start_root,start)
         if (start_root/'APP/OPEN_MODEL_WORKBENCH.html').read_bytes()!=(full_root/'APP/OPEN_MODEL_WORKBENCH.html').read_bytes():
             raise ValueError('Starter page mismatch')
         fresh=temp/'fresh';fresh.mkdir()
         with zipfile.ZipFile(full) as z:z.extractall(fresh)
-        checked=module(fresh/'MANJU_CONTINUE/VERIFY_DELIVERY.py','fresh_outer').verify(fresh/'MANJU_CONTINUE')
+        checked=module(fresh/'MANJU_RELINK/VERIFY_DELIVERY.py','fresh_outer').verify(fresh/'MANJU_RELINK')
         if checked!=full_check:raise ValueError('Fresh wrapper mismatch')
         # Recheck the wheel/source/history core after final outer compression.
-        restored=json.loads(subprocess.check_output([sys.executable,str(fresh/'MANJU_CONTINUE/APP/VERIFY_PACKAGE.py'),'--git'],text=True,timeout=180))
+        restored=json.loads(subprocess.check_output([sys.executable,str(fresh/'MANJU_RELINK/APP/VERIFY_PACKAGE.py'),'--git'],text=True,timeout=180))
         if not restored['ok']:raise ValueError('Core recovery failed in final wrapper')
         parts_dir=temp/'parts'
         parts=fragment.split_archive(full,parts_dir,block_size=(full.stat().st_size+4)//5)
         if len(parts['parts'])!=5:raise ValueError('Expected five fragments')
         for item in parts['parts']:
-            old=parts_dir/item['name'];new=parts_dir/('MANJU_CONTINUE_PART_'+str(item['index']).zfill(2)+'.zip')
+            old=parts_dir/item['name'];new=parts_dir/('MANJU_RELINK_PART_'+str(item['index']).zfill(2)+'.zip')
             old.rename(new);item['name']=new.name
         paths=[parts_dir/p['name'] for p in parts['parts']]
         fragment_check=fragment.reassemble(list(reversed(paths)),temp/'reassembled.zip',parts)
@@ -130,10 +134,10 @@ def build(repo, destination, evidence, example):
         release={'files':[describe(full),describe(start)],'parts':parts}
         html=(repo/'tools/user_ready/DOWNLOAD_HELPER.template.html').read_text(encoding='utf-8')
         html=html.replace('__SHA256__',(repo/'tools/user_ready/sha256.js').read_text(encoding='utf-8')).replace('__RELEASE__',json.dumps(release,ensure_ascii=True))
-        helper=temp/'MANJU_CONTINUE_DOWNLOAD_HELPER.html';helper.write_text(html,encoding='utf-8')
+        helper=temp/'MANJU_RELINK_DOWNLOAD_HELPER.html';helper.write_text(html,encoding='utf-8')
         helper_root=temp/'MANJU_DOWNLOAD_HELPER';helper_root.mkdir();shutil.copy2(helper,helper_root/'OPEN_DOWNLOAD_HELPER.html')
         (helper_root/'README.txt').write_text('完整解压，打开 OPEN_DOWNLOAD_HELPER.html。选择完整包核验，或选择本轮五个分段 ZIP 合成。分段不用解压，原文件不修改。\n',encoding='utf-8')
-        helper_zip=temp/'MANJU_CONTINUE_DOWNLOAD_HELPER.zip';zip_tree(helper_root,helper_zip)
+        helper_zip=temp/'MANJU_RELINK_DOWNLOAD_HELPER.zip';zip_tree(helper_root,helper_zip)
         published=[full,start,helper,helper_zip,*paths]
         for path in published:
             if path.suffix=='.zip':verify_zip(path)
@@ -143,8 +147,8 @@ def build(repo, destination, evidence, example):
                 'core':core_receipt,'outer':full_check,'starter':start_check,'fresh_core':restored,
                 'fragments_reassembled':fragment_check,'publication_integrity_checked':True,
                 'native_windows_acceptance':False,'client_download_confirmed':False}
-        (destination/'MANJU_CONTINUE_VERIFIED.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
-        (destination/'MANJU_CONTINUE_SHA256.txt').write_text('\n'.join(p['sha256']+'  '+p['name'] for p in result['files'])+'\n',encoding='utf-8')
+        (destination/'MANJU_RELINK_VERIFIED.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+        (destination/'MANJU_RELINK_SHA256.txt').write_text('\n'.join(p['sha256']+'  '+p['name'] for p in result['files'])+'\n',encoding='utf-8')
         (destination/'PARTS.json').write_text(json.dumps(parts,indent=2),encoding='utf-8')
         return result
 

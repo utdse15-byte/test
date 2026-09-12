@@ -1,5 +1,5 @@
-# Active State: Manju R16 maintenance 0.2.0+r16.2
+# Active State: Manju R16 maintenance 0.2.0+r16.3
 
-先完整阅读 `PROJECT_STATE_2026-09-12_12-30-33.md`。
+先完整阅读 `PROJECT_STATE_2026-09-12_13-44-52.md`。
 
-新增可选本机续作，不是原R17字节恢复。独立备份与本机恢复状态分离，原媒体/协议和质量名单保留；Windows及全项目发布门未标绿。
+新增跨区精确原素材找回与完整响应超时。旧原片、协议、质量名单和本机续作保留；Windows及全项目发布门未标绿。交付成功以实物收据为准。

@@ -162,4 +162,5 @@ window.ManjuWorkbench={SHA256,normalizeRequest,normalizeCatalog,modeReport,optio
 // FLEX_SCRIPT
 // EXCHANGE_SCRIPT
 // DESK_SCRIPT
+// RELINK_SCRIPT
 })();

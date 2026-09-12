@@ -1,0 +1,17 @@
+<details id="relink-panel" class="relink-panel">
+ <summary>素材改名或搬位置了？按内容批量找回</summary>
+ <p class="hint">用于已有任务、候选、返工和导演记录的缺失原文件。只接回 SHA-256 与大小一致的原内容，不按名字猜、不添加新候选，不改写图片或视频。</p>
+ <div class="actions"><button id="relink-check">检查缺失素材</button><label class="filebtn" for="relink-files">选择一批可能的原文件<input id="relink-files" class="hidden" type="file" multiple></label><button id="relink-existing">从已绑定工作区找回</button><button id="relink-report">导出缺失清单 TXT</button></div>
+ <p id="relink-status" class="hint" role="status" aria-live="polite">先导入需要续作的任务或记录，再检查。只读你明确选择的文件；不扫描磁盘目录，不上传。</p>
+ <div id="relink-inventory"></div>
+ <div id="relink-preview" hidden>
+  <h3>匹配结果，尚未接回</h3><p id="relink-summary"></p><div id="relink-rows"></div>
+  <label class="checkline"><input id="relink-confirmed" type="checkbox"><span>只修复下面匹配原内容的缺失用途；当前文字、角色和审片历史不改动。未匹配文件忽略。</span></label>
+  <button id="relink-apply" class="primary" disabled>接回匹配的原文件</button>
+ </div>
+ <button id="relink-cancel">取消查找 / 预览</button>
+ <p class="hint">每次最多选择 256 个文件。单个文件 128 MiB、全部引用去重后 512 MiB 的原有限制不变。新剪辑、新导出或重新编码，即使同名，也应作为新素材导入。这里只测量已记录视频元数据和导演 PNG，不代表画质审核或完整帧解码。</p>
+</details>
+<style>
+.relink-panel{margin:14px 0;padding:14px;border:1px solid var(--line);border-radius:10px;overflow-wrap:anywhere}.relink-panel summary{font-weight:650;cursor:pointer}.relink-panel .actions{display:flex;flex-wrap:wrap;gap:8px}.relink-panel button,.relink-panel .filebtn{white-space:normal;min-width:0}.relink-item{padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}.relink-item code{display:block;overflow-wrap:anywhere;white-space:normal}#relink-inventory,#relink-rows{max-height:300px;overflow:auto}@media(max-width:460px){.relink-panel .actions{flex-direction:column;align-items:stretch}}
+</style>

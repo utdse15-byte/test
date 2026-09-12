@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.2",
+  "version": "0.2.0+r16.3",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -112,14 +112,17 @@
       "坏改稿和坏模板导入不清空旧材料，恢复无法原样写入时拒绝整批覆盖",
       "只读收工包CLI核验与原字节旧版Studio提取，原十二档和媒体运行代码保持",
       "可选本机恢复点：主动开启、独立窗口序列、失败保留旧点、原格式收工ZIP导出",
-      "显式区分本机恢复与文件备份来源，恢复不标记独立备份；旧收工协议保持"
+      "显式区分本机恢复与文件备份来源，恢复不标记独立备份；旧收工协议保持",
+      "跨工作区按内容与大小找回原文件：改名保真、显式预览、元数据复核、接回前重读、过期预览拒绝",
+      "续作请求的响应正文受完整超时约束，卡住或迟到回执不标记保存成功"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
   "reconstruction": true,
   "formal_windows_release": false,
   "commercial_api_executed": false,
-  "prior_verified_stage": "R15",
-  "prior_archive_sha256": "312823ef257c2044ca7873fbad19f8984eff5bae261ad671002f06196b300a7b",
-  "maintenance_revision": "local-continuation-20260912"
+  "prior_verified_stage": "R16",
+  "prior_archive_sha256": "e8639fc37d9fe21e75b01f1584f1a6ec0db6393da14d08f0272ef117f427a04e",
+  "maintenance_revision": "exact-media-relink-20260912",
+  "prior_verified_version": "0.2.0+r16.2"
 }
