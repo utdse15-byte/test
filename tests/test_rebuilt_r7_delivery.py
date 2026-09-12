@@ -211,3 +211,13 @@ def test_explicit_external_wheelhouse_does_not_modify_release(package,tmp_path,m
     assert '--no-index' in calls[0] and str(wheelhouse.resolve()) in calls[0]
     assert '--index-url' not in calls[0] and not result['network_explicitly_allowed']
     assert V.verify(package)['checked_files']==before
+
+
+def test_runtime_version_mismatch_rejected_even_when_package_resealed(package):
+    runtime = b'__version__="0.2.0+r6"\n'
+    (package/'source/src/manju/__init__.py').write_bytes(runtime)
+    with zipfile.ZipFile(package/'wheels/manju.whl','w') as z:
+        z.writestr('manju/__init__.py',runtime)
+    seal(package)
+    with pytest.raises(ValueError,match='Runtime __version__'):
+        V.verify(package)

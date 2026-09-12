@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16",
+  "version": "0.2.0+r16.1",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -118,5 +118,6 @@
   "formal_windows_release": false,
   "commercial_api_executed": false,
   "prior_verified_stage": "R15",
-  "prior_archive_sha256": "312823ef257c2044ca7873fbad19f8984eff5bae261ad671002f06196b300a7b"
+  "prior_archive_sha256": "312823ef257c2044ca7873fbad19f8984eff5bae261ad671002f06196b300a7b",
+  "maintenance_revision": "user-ready-20260912"
 }

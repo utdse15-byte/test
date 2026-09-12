@@ -6,6 +6,7 @@ workspace directories are explicitly outside this immutable package inventory.
 """
 from __future__ import annotations
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -154,6 +155,16 @@ def verify(root: Path, *, git: bool = False) -> dict:
         raise ValueError('Missing recovery or identity payload')
     meta = read_json(root / 'PACKAGE.json')
     version = read_json(root / 'source/DELIVERY_VERSION.json')
+    # Validate without importing or executing code from the target package.
+    # A stale __version__ used to make a valid R16 pip install roll back.
+    init = regular_member(root, 'source/src/manju/__init__.py')
+    if init.stat().st_size > 1024 * 1024:
+        raise ValueError('Runtime version module exceeds 1 MiB')
+    tree = ast.parse(init.read_text(encoding='utf-8'))
+    assignments = [node.value for node in tree.body if isinstance(node, ast.Assign)
+                   and any(isinstance(t, ast.Name) and t.id == '__version__' for t in node.targets)]
+    if len(assignments) != 1 or ast.literal_eval(assignments[0]) != meta.get('version'):
+        raise ValueError('Runtime __version__ differs from package version; installation would be rejected')
     for key in ('stage', 'version', 'baseline', 'inherits', 'features', 'original_r3_r4_bytes_recovered', 'formal_windows_release'):
         if meta.get(key) != version.get(key):
             raise ValueError('Package and source version identity differ: ' + key)
