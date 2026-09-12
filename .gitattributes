@@ -1,0 +1,3 @@
+
+# Windows batch CRLF is intentional; retain all other whitespace checks.
+*.cmd whitespace=cr-at-eol
