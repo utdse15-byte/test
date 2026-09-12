@@ -131,9 +131,9 @@ $('flex-export-template').addEventListener('click',flexHandled(async()=>{
  download(new Blob([jsonBytes(value)],{type:'application/json'}),'MANJU_TEMPLATE_'+(await hash(value)).slice(0,12)+'.json');flexNotice('已发起纯文字模板下载。它不是现场备份，不会清除未备份提醒；请确认下载列表。');
 }));
 $('flex-template-file').addEventListener('change',flexHandled(async event=>{
- const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');flexState.busy=true;flexClearPreview();flexState.template=null;$('flex-preview-template').disabled=true;
- try{const value=normalizeTemplate(await parseFile(file));flexState.template=value;$('flex-template-status').textContent=`已核验模板：${value.name}\n${value.notes}\n范围：${Object.keys(value.fields).map(k=>FLEX_LABELS[k]).join('、')}。不含素材、旧批准或型号选择。`;$('flex-preview-template').disabled=false;}
- catch(error){$('flex-template-status').textContent='模板未通过核验，未保留可应用的模板。';throw error;}
+ const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');flexState.busy=true;const oldTemplate=flexState.template,guard=studioGuard();
+ try{const value=normalizeTemplate(await parseFile(file));require(oldTemplate===flexState.template&&guard===studioGuard(),'读取期间模板或工作已变化，旧模板仍在');flexClearPreview();flexState.template=value;$('flex-template-status').textContent=`已核验模板：${value.name}\n${value.notes}\n范围：${Object.keys(value.fields).map(k=>FLEX_LABELS[k]).join('、')}。不含素材、旧批准或型号选择。`;$('flex-preview-template').disabled=false;}
+ catch(error){flexClearPreview();$('flex-template-status').textContent='新模板未通过核验；此前有效模板和当前工作保持不变。';throw error;}
  finally{flexState.busy=false;event.target.value='';}
 }));
 $('flex-preview-template').addEventListener('click',flexHandled(async()=>{

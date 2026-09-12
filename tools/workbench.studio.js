@@ -5,7 +5,7 @@ const studioState={busy:false,pending:null,baseline:null,verified:null,serial:0}
 function studioRawForm(ids){return Object.fromEntries(ids.map(id=>[id,$(id).value]));}
 function studioView(){return {workspace:workspaceView(),repair:{form:studioRawForm(REPAIR_FORM),request:clone(repairState.request),source:clone(repairState.source)},director:{form:studioRawForm(DIRECTOR_FORM),source:clone(directorState.source),anchors:clone(directorState.anchors)},auxiliary_form:studioRawForm(STUDIO_AUXILIARY_FORM)};}
 function studioDocumentView(doc){const w=doc.workspace;return {workspace:{draft:w.draft,catalog:w.catalog,review:w.review,pending:w.pending,review_form:w.review_form,reveal:w.reveal},repair:doc.repair,director:doc.director,auxiliary_form:doc.auxiliary_form};}
-function studioBusy(){return Boolean(window.ManjuExchange?.isBusy())||Boolean(window.ManjuFlex?.isBusy())||activeUIOperations>1||studioState.busy||workspaceBusy||state.busy||reviewState.busy||repairState.busy||directorState.busy;}
+function studioBusy(){return Boolean(window.ManjuDesk?.isBusy())||Boolean(window.ManjuExchange?.isBusy())||Boolean(window.ManjuFlex?.isBusy())||activeUIOperations>1||studioState.busy||workspaceBusy||state.busy||reviewState.busy||repairState.busy||directorState.busy;}
 function studioGuard(){return canonical({view:studioView(),quality:$('quality-only').checked,revisions:[state.revision,state.generation,reviewState.revision,reviewState.formRevision,repairState.revision,directorState.revision,catalogRevision.serial]});}
 function studioMedia(doc){
  const required=requiredWorkspaceMedia(doc.workspace),geometry=new Map();
@@ -75,7 +75,16 @@ async function readStudio(blob){
  const rasters=new Map();for(const a of doc.director.anchors)for(const rec of [a.frame,a.guide])if(rec){let actual=rasters.get(rec.sha256);if(!actual){actual=(await directorPNG(studioEntry(bindings,rec,'image/png').file)).raster;rasters.set(rec.sha256,actual);}require(actual.width===rec.width&&actual.height===rec.height,'总备份PNG实测尺寸与记录不符');}
  return {document:doc,bindings};
 }
+function assertStudioRepresentable(doc){
+ const forms=[doc.workspace.draft.form,doc.repair.form,doc.director.form,doc.auxiliary_form];
+ for(const form of forms)for(const[id,text]of Object.entries(form)){
+  const original=$(id);require(original,'恢复字段不存在：'+id);const field=original.cloneNode(true);
+  if(field.tagName==='SELECT'&&![...field.options].some(o=>o.value===text)){const option=document.createElement('option');option.value=text;field.append(option);}
+  field.value=text;require(field.value===text,'恢复字段无法原样写入浏览器：'+id+'。当前工作未变，请修正数字或换行格式。');
+ }
+}
 function studioApplyRaw(result){
+ assertStudioRepresentable(result.document);
  const {document:doc,bindings}=result,workspaceBindings=new Map(doc.workspace.media.map(m=>[m.sha256,studioEntry(bindings,m,m.mime_type)]));
  // No awaits after validation. Media views are rebuilt from verified bindings.
  applyWorkspace({document:doc.workspace,bindings:workspaceBindings});

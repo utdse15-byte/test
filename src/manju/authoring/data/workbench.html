@@ -13,9 +13,38 @@
 <header><div class="top"><div><div class="brand">MANJU ONE · LOCAL STUDIO</div><h1>把一个镜头，交代清楚。</h1></div><span class="pill">离线运行 · 文件不上传</span></div><p>先确定要做什么，再核对型号、绑定素材、记录人工决定。这里不调用生成 API，不自动选片。</p></header>
 <main>
 <section class="panel" id="studio-home">
- <div class="brandline"><div><span class="tag good">R15 · 可外部往返的个人创作台</span><h2>质量不降档，工作不漏存。</h2></div><span class="tag">离线 · 人工确认</span></div>
+ <div class="brandline"><div><span class="tag good">R16 · 可外部往返的个人创作台</span><h2>打开材料，继续创作，收工带走。</h2></div><span class="tag">离线 · 人工确认</span></div>
  <p class="hint"><a href="#flex-section">自由组合与个人模板</a> · 沿用你的质量优先规则，不自动选型、生成或付款。现在可把镜头与审片、局部返工、导演材料一起存成一个总备份；原有单区 ZIP 继续可用。</p>
  <p><a href="#exchange-section">外部工具往返：带走原素材，逐字段带回文字修改 →</a></p>
+ <div id="desk-hub" class="desk-hub">
+ <div id="intake-drop" tabindex="0" role="group" aria-label="统一打开材料，可把文件拖到这里">
+  <h3>继续手上的工作</h3><p>不必记住第几区。选择或拖入文件，先识别内容，再由你决定放到哪里。</p>
+  <label class="filebtn" for="intake-files">打开文件 / 拖入材料<input id="intake-files" type="file" multiple class="hidden"></label>
+  <p id="intake-status" class="hint" role="status" aria-live="polite">备份 ZIP、任务 / 改稿 / 模板 JSON、配套 TXT 或原始媒体。只在本机读取，不打开远程链接。</p>
+  <div id="intake-preview" hidden>
+   <p id="intake-summary"></p><label class="field" for="intake-destination">如何使用<select id="intake-destination"></select></label>
+   <label id="intake-replace-note" class="checkline" hidden><input id="intake-confirmed" type="checkbox"><span>我已保存需要的旧工作，同意替换目标区的任务、记录或底片；其他区不动。</span></label>
+   <div class="actions"><button id="intake-open" disabled>前往对应入口</button><button id="intake-cancel">取消，不改当前工作</button></div>
+  </div>
+ </div>
+ <div id="desk-checkout">
+  <h3>今天先做到这里</h3><p>三个工作区、尚未接受的外部改稿、已加载模板及模板名称 / 说明，一份收工包带走。</p>
+  <div class="actions"><button id="desk-save" class="primary">保存收工包 ZIP</button><label class="filebtn" for="desk-verify-file">核验已保存的收工包<input class="hidden" id="desk-verify-file" type="file" accept=".zip"></label></div>
+  <p id="desk-save-status" class="hint" role="status" aria-live="polite">尚未核验收工包。发起下载不等于文件已经保存在你的电脑。</p>
+  <p id="desk-inventory" class="hint"></p>
+  <details><summary>保存范围与旧格式</summary><p>包含完整原素材，不缩图、不转码。包内 STUDIO.zip 是原版总备份，可直接给 R13 至 R15 使用；DESK.json 保存待处理外部改稿、已加载模板、模板名称/说明和命名副本名称。恢复不接受改稿或模板，不恢复当前批准。</p><p>不保存未应用的能力档或工作区取用预览、比较报告、单步撤回点、播放器位置、未绑定文件和主影片工程；不等于自动保存。新窗口可用上方统一入口核验并预览收工包。</p></details>
+ </div>
+</div>
+<div id="desk-restore-preview" class="warningbox" hidden>
+ <h3>收工包已核验，尚未替换当前工作</h3><pre id="desk-restore-summary"></pre>
+ <label class="checkline"><input id="desk-restore-confirmed" type="checkbox"><span>当前三个区和待处理材料将替换为包内内容；我已保存现有工作，确认恢复。</span></label>
+ <div class="actions"><button id="desk-restore-apply" disabled>恢复工作和待处理材料</button><button id="desk-restore-cancel">取消恢复</button></div>
+</div>
+<p class="hint">下方“总备份”是旧版兼容入口，只保存三个工作区；日常收工建议用上方收工包。</p>
+<style>
+.desk-hub{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}.desk-hub>div{min-width:0;border:1px solid var(--line);padding:16px;border-radius:10px;background:var(--paper);overflow-wrap:anywhere}.desk-hub h3{margin:0 0 7px;font-size:17px}.desk-hub p{font-size:13px}.desk-hub .filebtn{white-space:normal}.desk-hub .actions button{min-width:0}#intake-drop.drag-over{outline:3px solid var(--accent);outline-offset:2px}#intake-drop:focus-visible{outline:3px solid var(--accent)}#desk-restore-summary{overflow-wrap:anywhere;max-height:280px}@media(max-width:820px){.desk-hub{grid-template-columns:1fr}}@media(max-width:460px){.desk-hub .actions{flex-direction:column;align-items:stretch}}
+</style>
+
  <nav class="studio-routes" aria-label="创作路径">
   <a href="#workspace-section"><strong>准备镜头</strong><span>任务、素材与型号约束</span></a>
   <a href="#review-section"><strong>审片与定稿</strong><span>先看真实候选，再做决定</span></a>
@@ -205,7 +234,7 @@
 </style>
 
 <details class="panel"><summary>使用与保存说明</summary><p>本页面不依赖服务器或第三方脚本。草稿尝试保存在当前浏览器的本地存储中，但浏览器清理、隐私模式或 file:// 限制都可能让它失效；请把 JSON 或 ZIP 导出到自己的磁盘。恢复草稿不会恢复媒体字节，必须重新绑定文件。</p><p>从已有工程导入：<code>manju models from-shot 项目目录 镜头编号 --output shot-import.json</code>，然后在这里“导入任务 / 镜头”。原项目不被修改。</p><p>新适配包是独立伴随文件，不向旧 R2 provider-handoff 插入内容。它不生成视频，不连接商用接口，不改动原影片的选片或锁片状态。</p><p>JSON 数据只按文本显示；能力来源网址仅作证据记录，不由本页面自动访问。</p></details>
-<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">R15 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
+<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">R16 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
 </main>
 <script id="builtin-quality" type="application/json">{
   "schema_id": "manju.quality-shortlist/v1",
@@ -2918,7 +2947,7 @@ function strictJSON(text){
 async function parseFile(file){require(file&&file.size<=2*1024*1024,'JSON 最大 2 MiB');return strictJSON(await file.text());}
 async function importRequest(file){let value=await parseFile(file),context=null;if(value.schema_id==='manju.project-authoring-import/v1'){require(await hash(value.source_plan)===value.source_plan_sha256,'原项目上下文哈希不符');context={source_plan:value.source_plan,source_plan_sha256:value.source_plan_sha256,warnings:value.warnings||[]};value=value.request;}const request=normalizeRequest(value);state.generation++;state.files=new Map([...state.files].filter(([h])=>request.assets.some(a=>a.sha256===h)));state.sourceContext=context;fillRequest(request);showContext();invalidate();status('已导入任务。媒体字节未写入草稿，请重新选择本地文件绑定；原工程没有被修改。');}
 function showContext(){$('source-details').hidden=!state.sourceContext;$('source-context').textContent=state.sourceContext?JSON.stringify(state.sourceContext,null,2):'';}
-function handled(fn){return async(...args)=>{activeUIOperations++;try{await fn(...args);}catch(e){status(e.message||String(e),true);}finally{activeUIOperations--;window.ManjuStudio?.changed();window.ManjuFlex?.changed();window.ManjuExchange?.changed();}};}
+function handled(fn){return async(...args)=>{activeUIOperations++;try{await fn(...args);}catch(e){status(e.message||String(e),true);}finally{activeUIOperations--;window.ManjuStudio?.changed();window.ManjuFlex?.changed();window.ManjuExchange?.changed();window.ManjuDesk?.changed();}};}
 for(const id of ['shot-id','task','prompt','duration','resolution','ratio','preserve','change'])$(id).addEventListener('input',invalidate);
 $('reviewer').addEventListener('input',()=>{$('human-confirmed').checked=false;persist();});
 $('check-plan').addEventListener('click',handled(renderPlan));$('asset-files').addEventListener('change',handled(e=>addFiles([...e.target.files])));
@@ -3068,11 +3097,11 @@ async function buildWorkspace() {
  return {document:doc,blob:zipStore(entries)};
 }
 async function storedZipMembers(blob,profile='workspace') {
- require(['workspace','repair','director','studio'].includes(profile),'未知 ZIP 配置');
- require(blob&&blob.size>=22&&blob.size<=MAX_TOTAL+4*1024*1024,'工作现场 ZIP 为空或超过大小上限');
+ require(['workspace','repair','director','studio','desk','intake'].includes(profile),'未知 ZIP 配置');
+ require(blob&&blob.size>=22&&blob.size<=MAX_TOTAL+(profile==='desk'||profile==='intake'?8:4)*1024*1024,'工作现场 ZIP 为空或超过大小上限');
  const end=new DataView(await blob.slice(blob.size-22).arrayBuffer());
  require(end.getUint32(0,true)===0x06054b50&&end.getUint16(4,true)===0&&end.getUint16(6,true)===0&&end.getUint16(20,true)===0,'只读取本工具导出的无注释 ZIP');
- const memberLimit=profile==='studio'?136:128;
+ const memberLimit=profile==='desk'?3:profile==='intake'?256:profile==='studio'?136:128;
  const count=end.getUint16(10,true),length=end.getUint32(12,true),start=end.getUint32(16,true);
  require(count>=2&&count<=memberLimit&&count===end.getUint16(8,true)&&length<=memberLimit*286&&start+length===blob.size-22,'ZIP 中央目录无效');
  const bytes=new Uint8Array(await blob.slice(start,start+length).arrayBuffer()),view=new DataView(bytes.buffer),decoder=new TextDecoder('utf-8',{fatal:true});
@@ -3082,8 +3111,8 @@ async function storedZipMembers(blob,profile='workspace') {
   const flags=view.getUint16(cursor+8,true),method=view.getUint16(cursor+10,true),crc=view.getUint32(cursor+16,true),packed=view.getUint32(cursor+20,true),size=view.getUint32(cursor+24,true),n=view.getUint16(cursor+28,true),extra=view.getUint16(cursor+30,true),comment=view.getUint16(cursor+32,true),offset=view.getUint32(cursor+42,true);
   require(n>0&&n<=240&&cursor+46+n<=length&&!extra&&!comment&&view.getUint16(cursor+34,true)===0,'ZIP 路径或额外字段无效');
   const name=decoder.decode(bytes.subarray(cursor+46,cursor+46+n));safePath(name);
-  require(profile==='studio'?(name==='STUDIO.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):profile==='workspace'?(name==='WORKSPACE.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):(['PLAN.json','BRIEF.md','MANIFEST.json'].includes(name)||/^source\/[a-f0-9]{64}\.(mp4|mov|webm|mkv)$/.test(name)||(profile==='director'&&/^(frames|guides)\/[a-f0-9]{64}\.png$/.test(name))),'ZIP 包含未允许的路径');
-  require(!entries.has(name)&&!(flags&~0x800)&&method===0&&packed===size&&size>0&&size<=(name.endsWith('.json')?2*1024*1024:MAX_FILE),'ZIP 重复、压缩、加密或大小不符合工作现场格式');
+  require(profile==='intake'?true:profile==='desk'?['DESK.json','STUDIO.zip','MANIFEST.json'].includes(name):profile==='studio'?(name==='STUDIO.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):profile==='workspace'?(name==='WORKSPACE.json'||name==='MANIFEST.json'||/^media\/[a-f0-9]{64}$/.test(name)):(['PLAN.json','BRIEF.md','MANIFEST.json'].includes(name)||/^source\/[a-f0-9]{64}\.(mp4|mov|webm|mkv)$/.test(name)||(profile==='director'&&/^(frames|guides)\/[a-f0-9]{64}\.png$/.test(name))),'ZIP 包含未允许的路径');
+  require(!entries.has(name)&&!(flags&~0x800)&&method===0&&packed===size&&size>0&&size<=((profile==='desk'||profile==='intake')&&name==='STUDIO.zip'?MAX_TOTAL+4*1024*1024:name.endsWith('.json')?2*1024*1024:MAX_FILE),'ZIP 重复、压缩、加密或大小不符合工作现场格式');
   require((view.getUint32(cursor+38,true)>>>16&0xf000)!==0xa000,'不接受链接');
   require(offset===localEnd&&offset+30+n+size<=start,'ZIP 数据重叠、缺口或越界');
   const local=new Uint8Array(await blob.slice(offset,offset+30+n).arrayBuffer()),lv=new DataView(local.buffer);
@@ -3091,7 +3120,7 @@ async function storedZipMembers(blob,profile='workspace') {
   const data=blob.slice(offset+30+n,offset+30+n+size);entries.set(name,{name,data,crc,size});
   localEnd=offset+30+n+size;cursor+=46+n;total+=size;
  }
- require(cursor===length&&localEnd===start&&total<=MAX_TOTAL+4*1024*1024,'ZIP 未完整闭合或超限');return entries;
+ require(cursor===length&&localEnd===start&&total<=MAX_TOTAL+(profile==='desk'||profile==='intake'?8:4)*1024*1024,'ZIP 未完整闭合或超限');return entries;
 }
 async function readWorkspace(blob) {
  const entries=await storedZipMembers(blob);
@@ -3405,7 +3434,7 @@ const studioState={busy:false,pending:null,baseline:null,verified:null,serial:0}
 function studioRawForm(ids){return Object.fromEntries(ids.map(id=>[id,$(id).value]));}
 function studioView(){return {workspace:workspaceView(),repair:{form:studioRawForm(REPAIR_FORM),request:clone(repairState.request),source:clone(repairState.source)},director:{form:studioRawForm(DIRECTOR_FORM),source:clone(directorState.source),anchors:clone(directorState.anchors)},auxiliary_form:studioRawForm(STUDIO_AUXILIARY_FORM)};}
 function studioDocumentView(doc){const w=doc.workspace;return {workspace:{draft:w.draft,catalog:w.catalog,review:w.review,pending:w.pending,review_form:w.review_form,reveal:w.reveal},repair:doc.repair,director:doc.director,auxiliary_form:doc.auxiliary_form};}
-function studioBusy(){return Boolean(window.ManjuExchange?.isBusy())||Boolean(window.ManjuFlex?.isBusy())||activeUIOperations>1||studioState.busy||workspaceBusy||state.busy||reviewState.busy||repairState.busy||directorState.busy;}
+function studioBusy(){return Boolean(window.ManjuDesk?.isBusy())||Boolean(window.ManjuExchange?.isBusy())||Boolean(window.ManjuFlex?.isBusy())||activeUIOperations>1||studioState.busy||workspaceBusy||state.busy||reviewState.busy||repairState.busy||directorState.busy;}
 function studioGuard(){return canonical({view:studioView(),quality:$('quality-only').checked,revisions:[state.revision,state.generation,reviewState.revision,reviewState.formRevision,repairState.revision,directorState.revision,catalogRevision.serial]});}
 function studioMedia(doc){
  const required=requiredWorkspaceMedia(doc.workspace),geometry=new Map();
@@ -3475,7 +3504,16 @@ async function readStudio(blob){
  const rasters=new Map();for(const a of doc.director.anchors)for(const rec of [a.frame,a.guide])if(rec){let actual=rasters.get(rec.sha256);if(!actual){actual=(await directorPNG(studioEntry(bindings,rec,'image/png').file)).raster;rasters.set(rec.sha256,actual);}require(actual.width===rec.width&&actual.height===rec.height,'总备份PNG实测尺寸与记录不符');}
  return {document:doc,bindings};
 }
+function assertStudioRepresentable(doc){
+ const forms=[doc.workspace.draft.form,doc.repair.form,doc.director.form,doc.auxiliary_form];
+ for(const form of forms)for(const[id,text]of Object.entries(form)){
+  const original=$(id);require(original,'恢复字段不存在：'+id);const field=original.cloneNode(true);
+  if(field.tagName==='SELECT'&&![...field.options].some(o=>o.value===text)){const option=document.createElement('option');option.value=text;field.append(option);}
+  field.value=text;require(field.value===text,'恢复字段无法原样写入浏览器：'+id+'。当前工作未变，请修正数字或换行格式。');
+ }
+}
 function studioApplyRaw(result){
+ assertStudioRepresentable(result.document);
  const {document:doc,bindings}=result,workspaceBindings=new Map(doc.workspace.media.map(m=>[m.sha256,studioEntry(bindings,m,m.mime_type)]));
  // No awaits after validation. Media views are rebuilt from verified bindings.
  applyWorkspace({document:doc.workspace,bindings:workspaceBindings});
@@ -3668,9 +3706,9 @@ $('flex-export-template').addEventListener('click',flexHandled(async()=>{
  download(new Blob([jsonBytes(value)],{type:'application/json'}),'MANJU_TEMPLATE_'+(await hash(value)).slice(0,12)+'.json');flexNotice('已发起纯文字模板下载。它不是现场备份，不会清除未备份提醒；请确认下载列表。');
 }));
 $('flex-template-file').addEventListener('change',flexHandled(async event=>{
- const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');flexState.busy=true;flexClearPreview();flexState.template=null;$('flex-preview-template').disabled=true;
- try{const value=normalizeTemplate(await parseFile(file));flexState.template=value;$('flex-template-status').textContent=`已核验模板：${value.name}\n${value.notes}\n范围：${Object.keys(value.fields).map(k=>FLEX_LABELS[k]).join('、')}。不含素材、旧批准或型号选择。`;$('flex-preview-template').disabled=false;}
- catch(error){$('flex-template-status').textContent='模板未通过核验，未保留可应用的模板。';throw error;}
+ const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');flexState.busy=true;const oldTemplate=flexState.template,guard=studioGuard();
+ try{const value=normalizeTemplate(await parseFile(file));require(oldTemplate===flexState.template&&guard===studioGuard(),'读取期间模板或工作已变化，旧模板仍在');flexClearPreview();flexState.template=value;$('flex-template-status').textContent=`已核验模板：${value.name}\n${value.notes}\n范围：${Object.keys(value.fields).map(k=>FLEX_LABELS[k]).join('、')}。不含素材、旧批准或型号选择。`;$('flex-preview-template').disabled=false;}
+ catch(error){flexClearPreview();$('flex-template-status').textContent='新模板未通过核验；此前有效模板和当前工作保持不变。';throw error;}
  finally{flexState.busy=false;event.target.value='';}
 }));
 $('flex-preview-template').addEventListener('click',flexHandled(async()=>{
@@ -3815,8 +3853,9 @@ $('exchange-export-kit').addEventListener('click',exchangeHandled(async()=>{
  try{const result=await buildExchangeKit(doc,studioBindings(),sections,includeMedia);require(guard===studioGuard()&&canonical(sections)===canonical(exchangeSelection())&&includeMedia===$('exchange-media').checked&&activeUIOperations<=1,'打包期间工作或导出选项改变，未导出过时材料');download(result.blob,'MANJU_EXTERNAL_'+result.edit.base_sha256.slice(0,12)+'.zip');exchangeNotice('已发起外部编辑包下载。'+result.index.files.filter(r=>r.included).length+' 个原字节素材；请到下载列表保存。没有把交换材料当成总备份。');}finally{exchangeState.busy=false;}
 }));
 $('exchange-import-json').addEventListener('change',exchangeHandled(async event=>{
- const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');exchangeState.busy=true;exchangeClearPreview();exchangeState.edit=null;$('exchange-preview').disabled=true;$('exchange-import-texts').disabled=true;$('exchange-save-returned').disabled=true;$('exchange-import-status').textContent='正在核验新材料，上一份改稿已释放；工作区不变。';const serial=exchangeState.serial;
- try{require(file.size<=2*1024*1024,'JSON 最大 2 MiB');const data=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()),edit=await normalizeExchange(strictJSON(data));require(serial===exchangeState.serial,'读取期间材料选择变化，请重试');exchangeState.edit=edit;$('exchange-preview').disabled=false;$('exchange-import-texts').disabled=false;$('exchange-import-status').textContent=`已加载 ${file.name}，${Object.keys(edit.base).length} 个字段。未改变工作；可以再选择修改过的 TXT，或直接预览 JSON 中的 values。`;}
+ const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');exchangeState.busy=true;const serial=exchangeState.serial;const previous=exchangeState.edit;const guard=studioGuard();
+ try{require(file.size<=2*1024*1024,'JSON 最大 2 MiB');const data=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()),edit=await normalizeExchange(strictJSON(data));require(serial===exchangeState.serial&&previous===exchangeState.edit&&guard===studioGuard(),'读取期间材料或现场变化，保留原改稿，请重试');exchangeClearPreview();exchangeState.edit=edit;$('exchange-preview').disabled=false;$('exchange-import-texts').disabled=false;$('exchange-import-status').textContent=`已加载 ${file.name}，${Object.keys(edit.base).length} 个字段。未改变工作；可以再选择修改过的 TXT，或直接预览 JSON 中的 values。`;}
+ catch(error){exchangeClearPreview();$('exchange-import-status').textContent=exchangeState.edit?'新材料未通过核验；保留上一份有效改稿，可另存或重新预览。当前工作未改变。':'新材料未通过核验；尚无有效改稿，当前工作未改变。';throw error;}
  finally{exchangeState.busy=false;event.target.value='';}
 }));
 $('exchange-import-texts').addEventListener('change',exchangeHandled(async event=>{
@@ -3850,6 +3889,179 @@ $('exchange-undo-confirmed').addEventListener('change',exchangeChanged);
 $('exchange-undo').addEventListener('click',exchangeHandled(()=>{require(!studioBusy()&&exchangeState.undo&&$('exchange-undo-confirmed').checked,'请确认撤回');const saved=exchangeState.undo;require(saved.guard===studioGuard(),'继续编辑后不能用旧撤回点覆盖');exchangeApplyView(saved.before,saved.take);exchangeState.undo=null;exchangeClearPreview();exchangeNotice('已恢复本次外部文字应用前的现场，当前确认仍需重新核对；磁盘文件未改变。');}));
 for(const type of ['input','change','click'])document.addEventListener(type,()=>queueMicrotask(exchangeChanged));
 window.ManjuExchange={state:exchangeState,isBusy:()=>exchangeState.busy,changed:exchangeChanged,fields:exchangeFields,make:makeExchange,normalize:normalizeExchange,preview:previewExchange,apply:applyExchange,textMembers:exchangeTextMembers,overlayTexts:overlayExchangeTexts,mediaIndex:exchangeMediaIndex,buildKit:buildExchangeKit};
+
+// Daily work is a portable envelope around the unchanged Studio/v1 archive.
+// No browser persistence, remote calls, derived approvals or implicit writes.
+const DESK_FORM=['flex-template-name','flex-template-notes','flex-branch-name'];
+const DESK_KEYS=['schema_id','studio_archive_sha256','external_edit','personal_template','scratch_form','confirmations_restored','automatic_execution','project_modified'];
+const deskState={busy:false,pending:null,verified:null,intake:null,intakeSerial:0};
+function deskBuffers(){return {external_edit:clone(exchangeState.edit),personal_template:clone(flexState.template),scratch_form:studioRawForm(DESK_FORM)};}
+function deskFingerprint(){return canonical({view:studioView(),buffers:deskBuffers()});}
+function deskGuard(){return canonical({studio:studioGuard(),buffers:deskBuffers()});}
+const deskInitialBuffers=canonical(deskBuffers());
+function deskNotice(text,error=false){$('desk-save-status').textContent=text;$('desk-save-status').classList.toggle('reason',error);}
+function intakeNotice(text,error=false){$('intake-status').textContent=text;$('intake-status').classList.toggle('reason',error);}
+function deskNeedsSave(){return deskState.verified?deskFingerprint()!==deskState.verified:studioNeedsBackup()||canonical(deskBuffers())!==deskInitialBuffers;}
+async function scanBlob(blob){
+ const sha=new SHA256();let crc=0xffffffff;
+ // Keep memory bounded even when the original Studio.zip exceeds 128 MiB.
+ for(let offset=0;offset<blob.size;offset+=1024*1024){const data=new Uint8Array(await blob.slice(offset,offset+1024*1024).arrayBuffer());sha.update(data);for(const byte of data)crc=(crc>>>8)^CRC_TABLE[(crc^byte)&255];}
+ return {sha256:sha.hex(),crc:(crc^0xffffffff)>>>0};
+}
+async function normalizeDesk(value){
+ exactKeys(value,DESK_KEYS,'收工包');require(value.schema_id==='manju.desk-session/v1'&&hashPattern.test(value.studio_archive_sha256)&&value.confirmations_restored===false&&value.automatic_execution===false&&value.project_modified===false,'收工包版本、身份或人工边界无效');
+ if(value.external_edit!==null)await normalizeExchange(value.external_edit);
+ if(value.personal_template!==null)normalizeTemplate(value.personal_template);
+ studioForm(value.scratch_form,DESK_FORM);
+ require(jsonBytes(value).length<=2*1024*1024,'待处理文字合计超过 2 MiB，请分别另存外部改稿和模板');
+ return clone(value);
+}
+function deskAssertForm(doc){
+ for(const[id,text]of Object.entries(doc.scratch_form)){const test=$(id).cloneNode(true);test.value=text;require(test.value===text,'模板草稿无法原样写入：'+id+'；当前工作未改变。');}
+}
+async function buildDesk(){
+ const guard=deskGuard(),buffers=deskBuffers(),studio=await buildStudio(),scan=await scanBlob(studio.blob);
+ const document=await normalizeDesk({schema_id:'manju.desk-session/v1',studio_archive_sha256:scan.sha256,...buffers,confirmations_restored:false,automatic_execution:false,project_modified:false});
+ const data=jsonBytes(document),manifest=jsonBytes({schema_id:'manju.desk-manifest/v1',files:{'DESK.json':await hash(data),'STUDIO.zip':scan.sha256}});
+ require(activeUIOperations<=1&&guard===deskGuard(),'保存期间工作或待处理材料改变，未导出过时收工包');
+ return {document,studio,guard,blob:zipStore([{name:'DESK.json',data,crc:crc32(data)},{name:'STUDIO.zip',data:studio.blob,crc:scan.crc},{name:'MANIFEST.json',data:manifest,crc:crc32(manifest)}])};
+}
+async function readDesk(blob){
+ const entries=await storedZipMembers(blob,'desk');require(entries.size===3&&['DESK.json','STUDIO.zip','MANIFEST.json'].every(n=>entries.has(n)),'收工包文件集合不完整');
+ const parse=async name=>{const entry=entries.get(name),raw=new Uint8Array(await entry.data.arrayBuffer());require(crc32(raw)===entry.crc,'收工包元数据 CRC 不符');return {raw,value:strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(raw))};};
+ const raw=await parse('DESK.json'),document=await normalizeDesk(raw.value),manifest=(await parse('MANIFEST.json')).value;
+ exactKeys(manifest,['schema_id','files'],'收工包清单');require(manifest.schema_id==='manju.desk-manifest/v1','收工包清单版本不符');exactKeys(manifest.files,['DESK.json','STUDIO.zip'],'收工包文件清单');
+ const entry=entries.get('STUDIO.zip'),scan=await scanBlob(entry.data);
+ require(scan.crc===entry.crc&&scan.sha256===document.studio_archive_sha256&&scan.sha256===manifest.files['STUDIO.zip']&&await hash(raw.raw)===manifest.files['DESK.json'],'收工包内容校验不符，未恢复');
+ const studio=await readStudio(entry.data);deskAssertForm(document);assertStudioRepresentable(studio.document);
+ return {document,studio};
+}
+function deskClearRestore(){deskState.pending=null;$('desk-restore-preview').hidden=true;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;}
+function deskInstallBuffers(doc){
+ exchangeClearPreview();exchangeState.edit=clone(doc.external_edit);exchangeState.undo=null;exchangeState.lastReport=null;exchangeState.serial++;
+ $('exchange-preview').disabled=!exchangeState.edit;$('exchange-import-texts').disabled=!exchangeState.edit;$('exchange-report').disabled=true;
+ $('exchange-import-status').textContent=exchangeState.edit?'已恢复待处理外部改稿。尚未应用，请重新预览三方比较。':'收工包内没有待处理外部改稿，旧缓冲已清除。';
+ $('exchange-rows').replaceChildren();exchangeNotice('收工包中的改稿只是待处理材料，不是已接受的修改。');
+ flexClearPreview();flexState.template=clone(doc.personal_template);flexState.donor=null;flexState.undo=null;flexState.serial++;
+ $('flex-preview-template').disabled=!flexState.template;$('flex-preview-compose').disabled=true;$('flex-release-donor').disabled=true;
+ $('flex-template-status').textContent=flexState.template?'已恢复待应用模板：'+flexState.template.name+'。请重新预览，尚未应用。':'收工包内没有待应用模板。';
+ for(const[id,text]of Object.entries(doc.scratch_form))chooseValue(id,text);
+ $('flex-template-mode').value='fill_empty';$('flex-confirmed').checked=false;
+ exchangeChanged();flexChanged();
+}
+async function deskPreview(blob){
+ const guard=deskGuard(),result=await readDesk(blob);require(activeUIOperations<=1&&guard===deskGuard(),'核验期间工作或待处理材料改变，旧结果未应用，请重新打开');
+ deskClearRestore();deskState.pending={result,guard};const d=result.document,s=result.studio.document;
+ $('desk-restore-summary').textContent=`将替换三个工作区和待处理材料，不是自动合并。\n镜头：${s.workspace.draft.form['shot-id']}\n原素材：${s.media.length} 个，${s.media.reduce((n,m)=>n+m.bytes,0)} 字节\n待处理外部改稿：${d.external_edit?Object.keys(d.external_edit.values).length+' 个字段':'无，恢复会清除当前缓冲'}\n已加载模板：${d.personal_template?.name||'无，恢复会清除当前模板'}\n模板名称、说明和命名副本草稿：保留\n当前确认全部清除，质量优先开启；不自动接受外部修改或模板。`;
+ $('desk-restore-preview').hidden=false;deskNotice('收工包核验完成。当前工作仍在，请查看恢复预览。');$('desk-restore-preview').scrollIntoView({block:'center'});
+}
+function deskChanged(){
+ if(deskState.pending&&deskState.pending.guard!==deskGuard()){deskState.pending=null;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;$('desk-restore-summary').textContent='预览后工作或待处理材料已变化，旧预览失效。请重新打开收工包；新内容没有被覆盖。';}
+ if(deskState.intake&&deskState.intake.guard!==deskGuard()){deskState.intake=null;$('intake-open').disabled=true;$('intake-confirmed').checked=false;intakeNotice('识别后工作已变化，请重新选择文件；未导入或覆盖新内容。');}
+ if(deskState.verified&&deskNeedsSave())deskNotice('有未核验的新修改或待处理材料。此前收工包仍在，请重新保存并选回文件核验。');
+ $('desk-inventory').textContent=`当前：原素材 ${studioBindings().size} 个；待处理外部改稿 ${exchangeState.edit?'1 份':'无'}；已加载模板 ${flexState.template?'1 份':'无'}。`;
+ $('desk-restore-apply').disabled=!deskState.pending||!$('desk-restore-confirmed').checked;
+ const choice=deskState.intake?.routes[Number($('intake-destination').value)];$('intake-replace-note').hidden=!choice?.replace;$('intake-open').disabled=!choice||(choice.replace&&!$('intake-confirmed').checked);
+}
+function deskHandled(fn){return handled(async event=>{try{await fn(event);}catch(error){deskNotice('未完成：'+(error.message||error),true);throw error;}finally{deskChanged();}});}
+$('desk-save').addEventListener('click',deskHandled(async()=>{
+ require(!studioBusy(),'其他文件操作仍在进行');deskState.busy=true;
+ try{const result=await buildDesk();require(result.guard===deskGuard(),'工作已变化，请重试');download(result.blob,'MANJU_DESK_'+(await hash(result.document)).slice(0,12)+'.zip');deskNotice('已发起收工包下载。包含原工作现场和待处理改稿 / 模板；请保存后选回文件核验，尚不能声称已落盘。');}finally{deskState.busy=false;}
+}));
+$('desk-verify-file').addEventListener('change',deskHandled(async event=>{
+ const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');deskState.busy=true;const guard=deskGuard();
+ try{const result=await readDesk(file);require(guard===deskGuard()&&activeUIOperations<=1,'核验期间内容改变，未标记备份');const buffers={external_edit:result.document.external_edit,personal_template:result.document.personal_template,scratch_form:result.document.scratch_form};
+  const matches=canonical({view:studioDocumentView(result.studio.document),buffers})===deskFingerprint();
+  if(matches){deskState.verified=deskFingerprint();studioState.verified=canonical(studioView());state.dirty=false;reviewState.dirty=false;repairState.dirty=false;directorState.dirty=false;deskNotice('已核验你选回的收工包，三个工作区和待处理材料均与当前一致。只核验，没有替换工作。');}
+  else deskNotice('所选收工包有效，但与当前工作或待处理材料不同。没有替换，也没有把新修改标为已备份。');
+ }finally{deskState.busy=false;event.target.value='';}
+}));
+$('desk-restore-confirmed').addEventListener('change',deskChanged);
+$('desk-restore-cancel').addEventListener('click',()=>{deskClearRestore();deskNotice('取消恢复，当前工作和待处理材料不变。');});
+$('desk-restore-apply').addEventListener('click',deskHandled(()=>{
+ require(!studioBusy()&&deskState.pending&&$('desk-restore-confirmed').checked,'请核验预览并明确确认');require(deskState.pending.guard===deskGuard(),'预览已过时，不能覆盖新内容');
+ const result=deskState.pending.result;deskAssertForm(result.document);assertStudioRepresentable(result.studio.document);
+ studioApplyRaw(result.studio);deskInstallBuffers(result.document);studioClearPending();deskClearRestore();
+ deskState.verified=deskFingerprint();studioState.verified=canonical(studioView());deskNotice('收工包已恢复。原素材可直接使用；外部改稿和模板仍待预览，未接受任何修改或批准。');
+}));
+// Identification is read-only. Files only enter a real input after a user click.
+function intakeRoute(label,input,section,replace=false,extra={}){return {label,input,section,replace,...extra};}
+async function identifyIntake(files){
+ require(files.length>0&&files.length<=32,'一次选择 1 至 32 个文件；JSON 或 ZIP 请一次一个');
+ if(files.every(f=>extension(f.name)==='.txt')){require(files.every(f=>f.size<=120000),'单个 TXT 超过文字上限');return {kind:'texts',summary:'配套外部改稿 TXT。先加载对应 EDIT.json，再由第09区核对编号。',routes:[intakeRoute('送到外部改稿，核对原编号','exchange-import-texts','exchange-section')]};}
+ const allowed=[...IMAGE_EXTS,...VIDEO_EXTS,...AUDIO_EXTS];
+ if(files.every(f=>allowed.includes(extension(f.name)))){
+  require(files.every(f=>f.size>0&&f.size<=MAX_FILE)&&files.reduce((n,f)=>n+f.size,0)<=MAX_TOTAL,'媒体超出单文件128 MiB / 合计512 MiB限制');
+  const image=files.every(f=>IMAGE_EXTS.includes(extension(f.name))),video=files.every(f=>VIDEO_EXTS.includes(extension(f.name))),audio=files.every(f=>AUDIO_EXTS.includes(extension(f.name)));const routes=[];
+  if(video){routes.push(intakeRoute('作为新候选，进入审片','review-files','review-section'));if(files.length===1){routes.push(intakeRoute('作为返工原片（替换当前底片）','repair-source','repair-section',true),intakeRoute('作为导演运动底片（替换当前底片）','director-source','director-section',true));}}
+  const roles=image?['first_frame','last_frame','subject_reference']:video?['source_video','reference_video','performance_video']:audio?['reference_audio']:[];
+  for(const role of roles)routes.push(intakeRoute('绑定为 '+ROLE_NAMES[role],'asset-files','workspace-section',false,{role}));
+  require(routes.length,'请按同类媒体分批打开，不猜测混合文件的用途');return {kind:'media',summary:`${files.length} 个媒体文件。名称/扩展名仅用于提出入口，目标区还会检查实际文件；不会按同名自动覆盖旧候选。`,routes};
+ }
+ require(files.length===1,'不同类型材料请分批打开，未导入其中任何一项');const file=files[0];
+ require(file.size>0&&file.size<=MAX_TOTAL+8*1024*1024,'文件为空或超出本地大小上限');
+ const header=new Uint8Array(await file.slice(0,4).arrayBuffer());
+ if(header[0]===0x50&&header[1]===0x4b){
+  const entries=await storedZipMembers(file,'intake');const markers=['DESK.json','STUDIO.json','WORKSPACE.json','PLAN.json','EDIT.json','REQUEST.json'].filter(n=>entries.has(n));
+  require(markers.length===1,'无法唯一识别此 ZIP。完整影片包或示例合集请先解压，再打开其中的材料文件。');
+  const name=markers[0],entry=entries.get(name),bytes=new Uint8Array(await entry.data.arrayBuffer());require(crc32(bytes)===entry.crc,'材料元数据 CRC 不符');const doc=strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
+  if(name==='DESK.json'&&doc.schema_id==='manju.desk-session/v1')return {kind:'desk',summary:'收工包：三个工作区与待处理改稿 / 模板。下一步先完整核验并预览，不立即恢复。',routes:[intakeRoute('核验并预览恢复收工包',null,'desk-restore-preview',false,{desk:true})]};
+  if(name==='STUDIO.json'&&doc.schema_id==='manju.studio-session/v1')return {kind:'studio',summary:'三个工作区的旧版总备份。可以完整恢复，也可以只取用其中一个工作区。',routes:[intakeRoute('核验并预览完整恢复','import-studio','studio-home'),intakeRoute('只取用部分工作区','flex-donor-file','flex-section')]};
+  if(name==='WORKSPACE.json'&&doc.schema_id==='manju.authoring-workspace/v1')return {kind:'workspace',summary:'镜头与审片现场；不包含独立返工和导演区。',routes:[intakeRoute('核验并恢复镜头与审片','import-workspace','workspace-section')]};
+  if(name==='PLAN.json'&&doc.schema_id==='manju.repair-plan/v1')return {kind:'repair',summary:'局部返工材料，包含原片。目标入口会重新核验并要求确认。',routes:[intakeRoute('打开返工材料','repair-import','repair-section')]};
+  if(name==='PLAN.json'&&doc.schema_id==='manju.director-plan/v1')return {kind:'director',summary:'导演材料，包含底片、原帧和目标图。',routes:[intakeRoute('打开导演材料','director-import','director-section')]};
+  if(name==='EDIT.json'&&doc.schema_id==='manju.external-edit/v1')throw new Error('这是外部编辑材料 ZIP，不是工作备份。请解压，修改后打开其中 EDIT.json 和配套 TXT；媒体按实际用途另行添加。');
+  throw new Error('此 ZIP 不是已支持的可恢复材料；交接包和任意剪辑工程不会被假装还原。');
+ }
+ require(file.size<=2*1024*1024,'未知文件不作为 JSON 读取；JSON 最大 2 MiB');
+ const doc=strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()));require(doc&&typeof doc==='object'&&!Array.isArray(doc),'材料必须是带版本标记的对象');
+ const routes={
+  'manju.model-request/v1':['request','镜头任务，不含媒体。导入会替换上方任务，原工程不变。',intakeRoute('导入镜头任务','import-request','workspace-section',true)],
+  'manju.project-authoring-import/v1':['request','主影片只读导出的镜头与上下文。此页修改不会自动写回原工程。',intakeRoute('导入工程镜头','import-request','workspace-section',true)],
+  'manju.model-catalog/v1':['catalog','型号能力目录。先展示差异，确认后才替换。',intakeRoute('预览能力档变化','import-catalog','catalog-preview')],
+  'manju.creative-template/v1':['template','纯文字个人模板，先核验再预览，不立即套用。',intakeRoute('载入待应用模板','flex-template-file','flex-section')],
+  'manju.external-edit/v1':['external','外部文字修改。只加载到缓冲，再三方比较；不直接覆盖本地。',intakeRoute('载入外部改稿','exchange-import-json','exchange-section')],
+  'manju.review-document/v1':['review','历史审片记录，不含视频字节；不是新的批准。',intakeRoute('导入历史审片记录','import-review','review-section',true)]
+ };
+ const selected=routes[doc.schema_id];require(selected,'未支持的 JSON 类型或版本；没有改写、执行或导入任何内容');return {kind:selected[0],summary:selected[1],routes:[selected[2]]};
+}
+async function prepareIntake(files){
+ require(!studioBusy(),'其他文件操作仍在进行');deskState.busy=true;const serial=++deskState.intakeSerial,guard=deskGuard();deskState.intake=null;$('intake-open').disabled=true;$('intake-preview').hidden=true;
+ try{const result=await identifyIntake(files);require(serial===deskState.intakeSerial&&guard===deskGuard()&&activeUIOperations<=1,'识别期间工作或材料已变化，请重新打开');deskState.intake={...result,files,guard};$('intake-summary').textContent=result.summary;$('intake-destination').replaceChildren(...result.routes.map((r,i)=>{const option=element('option',r.label);option.value=String(i);return option;}));$('intake-confirmed').checked=false;$('intake-preview').hidden=false;intakeNotice('已识别 '+files.map(f=>f.name).join('、')+'。当前工作尚未改变。');}
+ finally{deskState.busy=false;deskChanged();}
+}
+$('intake-files').addEventListener('change',handled(async event=>{try{await prepareIntake([...event.target.files]);}catch(e){intakeNotice('未打开：'+e.message,true);throw e;}finally{event.target.value='';}}));
+$('intake-destination').addEventListener('change',()=>{$('intake-confirmed').checked=false;deskChanged();});$('intake-confirmed').addEventListener('change',deskChanged);
+$('intake-cancel').addEventListener('click',()=>{deskState.intakeSerial++;deskState.intake=null;$('intake-preview').hidden=true;intakeNotice('已取消，原文件和当前工作未改变。');});
+function intakeReveal(id){const target=$(id);if(!target)return;for(let p=target;p;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;target.scrollIntoView({block:'start'});}
+$('intake-open').addEventListener('click',()=>{
+ try{
+  require(!studioBusy()&&activeUIOperations===0&&deskState.intake,'请先识别文件，等待当前操作完成');const current=deskState.intake,route=current.routes[Number($('intake-destination').value)];require(current.guard===deskGuard()&&route,'工作已改变，请重新打开');require(!route.replace||$('intake-confirmed').checked,'请明确确认替换目标区');
+  if(route.input==='exchange-import-texts')require(exchangeState.edit,'先打开本次配套的 EDIT.json，再取回 TXT；当前文字不变');
+  deskState.intake=null;$('intake-preview').hidden=true;
+  if(route.desk){deskHandled(async()=>{require(!studioBusy(),'其他文件操作仍在进行');deskState.busy=true;try{await deskPreview(current.files[0]);}finally{deskState.busy=false;}})();return;}
+  const input=$(route.input);require(input&&!input.disabled,'该入口尚未就绪');const transfer=new DataTransfer();for(const file of current.files)transfer.items.add(file);input.files=transfer.files;if(route.role)$('asset-role').value=route.role;
+  // Dispatch outside a handled operation: the original input owns its lifecycle.
+  input.dispatchEvent(new Event('change',{bubbles:true}));intakeReveal(input.closest('details')?.id||route.section);
+  intakeNotice('已送到“'+route.label+'”。请按目标区显示的核验结果继续，未自动接受任何批准。');
+ }catch(e){intakeNotice('未打开：'+e.message,true);status(e.message,true);}finally{deskChanged();}
+});
+const intakeDrop=$('intake-drop');
+for(const type of ['dragenter','dragover'])intakeDrop.addEventListener(type,event=>{if([...event.dataTransfer.types].includes('Files')){event.preventDefault();intakeDrop.classList.add('drag-over');}});
+intakeDrop.addEventListener('dragleave',()=>intakeDrop.classList.remove('drag-over'));
+intakeDrop.addEventListener('drop',handled(async event=>{event.preventDefault();intakeDrop.classList.remove('drag-over');const files=[...event.dataTransfer.files];if(!files.length){intakeNotice('这里只接收本地文件，不访问拖入的网址。',true);return;}try{await prepareIntake(files);}catch(e){intakeNotice('未打开：'+e.message,true);throw e;}}));
+// Dropping a file outside the inbox must not navigate away and lose drafts.
+document.addEventListener('dragover',event=>{if([...event.dataTransfer?.types||[]].includes('Files'))event.preventDefault();});
+document.addEventListener('drop',event=>{
+ if(![...event.dataTransfer?.types||[]].includes('Files'))return;event.preventDefault();
+ if(intakeDrop.contains(event.target))return;
+ const files=[...event.dataTransfer.files];handled(async()=>{try{await prepareIntake(files);intakeDrop.scrollIntoView({block:'center'});}catch(e){intakeNotice('未打开：'+e.message,true);throw e;}})();
+});
+intakeDrop.addEventListener('keydown',event=>{if(event.target===intakeDrop&&['Enter',' '].includes(event.key)){event.preventDefault();$('intake-files').click();}});
+window.addEventListener('beforeunload',event=>{if(deskNeedsSave()){event.preventDefault();event.returnValue='';}});
+for(const type of ['input','change','click'])document.addEventListener(type,()=>queueMicrotask(deskChanged));
+window.ManjuDesk={state:deskState,isBusy:()=>deskState.busy,changed:deskChanged,needsSave:deskNeedsSave,view:deskBuffers,normalize:normalizeDesk,build:buildDesk,read:readDesk,preview:deskPreview,identify:identifyIntake,prepare:prepareIntake,fingerprint:deskFingerprint};
+deskChanged();
 
 })();
 </script>

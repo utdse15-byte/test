@@ -300,11 +300,16 @@ def test_template_text_not_executed_and_unknown_keys_rejected(page,tmp_path):
     page.locator('#flex-template-box > summary').click();page.locator('#flex-template-file').set_input_files(file)
     expect(page.locator('#flex-preview-template')).to_be_enabled()
     assert page.evaluate('window.injected') is None
+    previous = json.loads(json.dumps(t))
     t['fields']['shot']['assets']=[];file.write_bytes(canonical(t))
     page.locator('#flex-template-file').set_input_files(file)
     expect(page.locator('#flex-template-status')).to_contain_text('未通过')
-    assert page.locator('#flex-preview-template').is_disabled()
-    assert page.evaluate('ManjuFlex.state.template') is None
+    # R16: malformed replacement cannot evict the last valid template.
+    expect(page.locator('#flex-preview-template')).to_be_enabled()
+    assert page.evaluate('ManjuFlex.state.template') == previous
+    assert page.evaluate('ManjuFlex.state.pending') is None
+    assert not page.locator('#flex-confirmed').is_checked()
+    assert page.evaluate('window.injected') is None
 
 
 def test_named_branch_is_old_studio_format_and_not_false_saved(page,tmp_path):

@@ -1,6 +1,6 @@
 {
-  "stage": "R15",
-  "version": "0.2.0+r15",
+  "stage": "R16",
+  "version": "0.2.0+r16",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -15,7 +15,8 @@
     "R11",
     "R12",
     "R13",
-    "R14"
+    "R14",
+    "R15"
   ],
   "features": {
     "R3": [
@@ -103,12 +104,19 @@
       "原编号绑定TXT回传、未完成草稿纯文字交换、一次会话内撤回",
       "五个离线CLI提供编辑/材料导出、文字回填、只读预览和预览哈希约束的新总备份",
       "梳理整工程、剪辑、字幕、候选、能力档的真实进出边界，原协议与质量名单保持"
+    ],
+    "R16": [
+      "统一文件入口按JSON/ZIP身份与媒体用途分流，拖放/键盘操作，不自动恢复或批准",
+      "收工包保存原格式总备份、待处理外部改稿和已加载模板/文字草稿，完整核验后恢复",
+      "下载与本地选回核验分开，跨区/缓冲变更使旧预览失效，不把未接受意见自动应用",
+      "坏改稿和坏模板导入不清空旧材料，恢复无法原样写入时拒绝整批覆盖",
+      "只读收工包CLI核验与原字节旧版Studio提取，原十二档和媒体运行代码保持"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
   "reconstruction": true,
   "formal_windows_release": false,
   "commercial_api_executed": false,
-  "prior_verified_stage": "R14",
-  "prior_archive_sha256": "179e736e226c737865dacd563d691119d61fea982cc7b8759779271aa3a1aa0c"
+  "prior_verified_stage": "R15",
+  "prior_archive_sha256": "312823ef257c2044ca7873fbad19f8984eff5bae261ad671002f06196b300a7b"
 }

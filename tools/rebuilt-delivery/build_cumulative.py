@@ -51,7 +51,7 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
         raise ValueError('Commit source and documentation before packaging')
     version = json.loads((repo/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))
     stage = version['stage']
-    if stage not in {'R8','R9','R10','R11','R12','R13','R14','R15'}:
+    if stage not in {'R8','R9','R10','R11','R12','R13','R14','R15','R16'}:
         raise ValueError('Unsupported cumulative stage')
     head, tree = git('rev-parse','HEAD').strip(), git('rev-parse','HEAD^{tree}').strip()
     names = [n for n in git('ls-files','-z').split('\0') if n]

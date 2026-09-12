@@ -370,6 +370,19 @@
       "before"
     ]
   },
+  "models desk-extract-studio": {
+    "exists": true,
+    "params": [
+      "archive",
+      "output"
+    ]
+  },
+  "models desk-verify": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "models diff": {
     "exists": true,
     "params": [

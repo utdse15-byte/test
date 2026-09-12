@@ -218,6 +218,22 @@ def director_verify_command(archive: Path):
     _emit(verify_director_bundle(archive))
 
 
+@app.command('desk-verify')
+@_guard
+def desk_verify_command(archive: Path):
+    """只读核验收工包及待处理材料，不恢复、批准或执行。"""
+    from .desk import verify_desk
+    _emit(verify_desk(archive))
+
+
+@app.command('desk-extract-studio')
+@_guard
+def desk_extract_studio_command(archive: Path, output: Path = typer.Option(..., '--output')):
+    """提取原字节 Studio/v1 给旧版本使用；拒绝覆盖已有文件。"""
+    from .desk import extract_studio
+    _emit(extract_studio(archive, output))
+
+
 @app.command('studio-verify')
 @_guard
 def studio_verify_command(archive: Path):

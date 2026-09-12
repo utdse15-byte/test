@@ -1,0 +1,28 @@
+<div id="desk-hub" class="desk-hub">
+ <div id="intake-drop" tabindex="0" role="group" aria-label="统一打开材料，可把文件拖到这里">
+  <h3>继续手上的工作</h3><p>不必记住第几区。选择或拖入文件，先识别内容，再由你决定放到哪里。</p>
+  <label class="filebtn" for="intake-files">打开文件 / 拖入材料<input id="intake-files" type="file" multiple class="hidden"></label>
+  <p id="intake-status" class="hint" role="status" aria-live="polite">备份 ZIP、任务 / 改稿 / 模板 JSON、配套 TXT 或原始媒体。只在本机读取，不打开远程链接。</p>
+  <div id="intake-preview" hidden>
+   <p id="intake-summary"></p><label class="field" for="intake-destination">如何使用<select id="intake-destination"></select></label>
+   <label id="intake-replace-note" class="checkline" hidden><input id="intake-confirmed" type="checkbox"><span>我已保存需要的旧工作，同意替换目标区的任务、记录或底片；其他区不动。</span></label>
+   <div class="actions"><button id="intake-open" disabled>前往对应入口</button><button id="intake-cancel">取消，不改当前工作</button></div>
+  </div>
+ </div>
+ <div id="desk-checkout">
+  <h3>今天先做到这里</h3><p>三个工作区、尚未接受的外部改稿、已加载模板及模板名称 / 说明，一份收工包带走。</p>
+  <div class="actions"><button id="desk-save" class="primary">保存收工包 ZIP</button><label class="filebtn" for="desk-verify-file">核验已保存的收工包<input class="hidden" id="desk-verify-file" type="file" accept=".zip"></label></div>
+  <p id="desk-save-status" class="hint" role="status" aria-live="polite">尚未核验收工包。发起下载不等于文件已经保存在你的电脑。</p>
+  <p id="desk-inventory" class="hint"></p>
+  <details><summary>保存范围与旧格式</summary><p>包含完整原素材，不缩图、不转码。包内 STUDIO.zip 是原版总备份，可直接给 R13 至 R15 使用；DESK.json 保存待处理外部改稿、已加载模板、模板名称/说明和命名副本名称。恢复不接受改稿或模板，不恢复当前批准。</p><p>不保存未应用的能力档或工作区取用预览、比较报告、单步撤回点、播放器位置、未绑定文件和主影片工程；不等于自动保存。新窗口可用上方统一入口核验并预览收工包。</p></details>
+ </div>
+</div>
+<div id="desk-restore-preview" class="warningbox" hidden>
+ <h3>收工包已核验，尚未替换当前工作</h3><pre id="desk-restore-summary"></pre>
+ <label class="checkline"><input id="desk-restore-confirmed" type="checkbox"><span>当前三个区和待处理材料将替换为包内内容；我已保存现有工作，确认恢复。</span></label>
+ <div class="actions"><button id="desk-restore-apply" disabled>恢复工作和待处理材料</button><button id="desk-restore-cancel">取消恢复</button></div>
+</div>
+<p class="hint">下方“总备份”是旧版兼容入口，只保存三个工作区；日常收工建议用上方收工包。</p>
+<style>
+.desk-hub{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}.desk-hub>div{min-width:0;border:1px solid var(--line);padding:16px;border-radius:10px;background:var(--paper);overflow-wrap:anywhere}.desk-hub h3{margin:0 0 7px;font-size:17px}.desk-hub p{font-size:13px}.desk-hub .filebtn{white-space:normal}.desk-hub .actions button{min-width:0}#intake-drop.drag-over{outline:3px solid var(--accent);outline-offset:2px}#intake-drop:focus-visible{outline:3px solid var(--accent)}#desk-restore-summary{overflow-wrap:anywhere;max-height:280px}@media(max-width:820px){.desk-hub{grid-template-columns:1fr}}@media(max-width:460px){.desk-hub .actions{flex-direction:column;align-items:stretch}}
+</style>

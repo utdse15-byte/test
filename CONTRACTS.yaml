@@ -30,6 +30,24 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  - id: manju.desk-session/v1
+    kind: schema
+    owner: manju.authoring.desk:Desk
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: End-of-day envelope around unchanged Studio/v1 with staged external edits and templates. Does not restore consent or apply staged text.
+
+  - id: manju.desk-manifest/v1
+    kind: schema
+    owner: manju.authoring.desk:verify_desk
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Closed hash inventory of DESK.json and the original STUDIO.zip; content integrity, not authenticity or a media decode.
+
   - id: manju.external-edit/v1
     kind: schema
     owner: manju.authoring.exchange:ExternalEdit

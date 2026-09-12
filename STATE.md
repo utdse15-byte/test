@@ -1,5 +1,5 @@
-# Active State: R15 cumulative candidate
+# Active State: R16 cumulative candidate
 
-先完整阅读最新快照：`PROJECT_STATE_2026-09-12_04-45-30.md`。
+先完整阅读最新快照：`PROJECT_STATE_2026-09-12_08-00-50.md`。
 
-外部JSON/TXT往返、逐字段三方比较与全项目进出边界见R15报告。测试与最终发布身份以EVIDENCE、PACKAGE及独立恢复收据为准。旧快照/任务/LAST_GREEN原样；Windows、全回归和商业执行未标绿。
+统一打开材料、收工包和失败保留旧稿，入口在tools/delivery/QUICKSTART_ZH.md。精确验证读R16_VALIDATION及EVIDENCE；正式Windows、完整回归和商业执行未标绿，旧快照和LAST_GREEN保留。

@@ -402,11 +402,15 @@ def test_pending_returned_text_can_be_saved_without_touching_workspace(page,tmp_
     assert page.evaluate('ManjuExchange.state.pending.report.rows.find(r=>r.key==="shot/prompt").status')=='ready'
 
 
-def test_invalid_reload_clears_old_ready_label_and_save_buffer(page,tmp_path):
+def test_invalid_reload_clears_ready_label_but_retains_valid_buffer(page,tmp_path):
     p,e=export_ui_edit(page,tmp_path);load_ui_edit(page,p,e)
     p.write_text('{"broken":true}',encoding='utf-8')
     page.locator('#exchange-import-json').set_input_files(p)
     expect(page.locator('#exchange-status')).to_contain_text('未完成')
     expect(page.locator('#exchange-import-status')).not_to_contain_text('已加载')
-    expect(page.locator('#exchange-save-returned')).to_be_disabled()
-    assert page.evaluate('ManjuExchange.state.edit') is None
+    # R16 keeps rescuable text, not the failed input or an old approval.
+    expect(page.locator('#exchange-save-returned')).to_be_enabled()
+    expect(page.locator('#exchange-import-status')).to_contain_text('保留上一份有效改稿')
+    assert page.evaluate('ManjuExchange.state.edit') == e
+    assert page.evaluate('ManjuExchange.state.pending') is None
+    assert not page.locator('#exchange-confirmed').is_checked()

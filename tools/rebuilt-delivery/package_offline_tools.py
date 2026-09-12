@@ -14,7 +14,7 @@ def build(repo:Path,output:Path):
     if status.strip():raise ValueError('Commit the source first')
     version=json.loads((repo/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))
     stage=version['stage']
-    if stage not in {'R7','R8','R9','R10','R11','R12','R13','R14','R15'}:raise ValueError('This compact toolkit requires R7 or later')
+    if stage not in {'R7','R8','R9','R10','R11','R12','R13','R14','R15','R16'}:raise ValueError('This compact toolkit requires R7 or later')
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo).decode().strip()
     html=(repo/'tools/model_workbench.html').read_bytes()
     if html!=(repo/'src/manju/authoring/data/workbench.html').read_bytes():raise ValueError('Standalone and installed workbench differ')
