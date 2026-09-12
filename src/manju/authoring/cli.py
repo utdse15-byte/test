@@ -224,3 +224,46 @@ def studio_verify_command(archive: Path):
     """只读核验三个工作区总备份，不解压、不恢复批准或执行生成。"""
     from .studio import verify_studio
     _emit(verify_studio(archive))
+
+
+@app.command('studio-diff')
+@_guard
+def studio_diff_command(before: Path, after: Path,
+                        output: Optional[Path] = typer.Option(None, '--output')):
+    """只读比较两个完整备份的工作区、文字和媒体变化，不恢复现场。"""
+    from .flexibility import difference, read_verified
+    a, _ = read_verified(before)
+    b, _ = read_verified(after)
+    _emit(difference(a, b), output)
+
+
+@app.command('studio-compose')
+@_guard
+def studio_compose_command(target: Path, donor: Path,
+                           take: list[str] = typer.Option(..., '--take'),
+                           output: Path = typer.Option(..., '--output')):
+    """按shot/repair/director/catalog取用工作区，写全新总备份，不覆盖原包。"""
+    from .flexibility import compose_archives
+    _emit(compose_archives(target, donor, take, output))
+
+
+@app.command('template-create')
+@_guard
+def template_create_command(archive: Path, name: str = typer.Option(..., '--name'),
+                            area: Optional[list[str]] = typer.Option(None, '--area'),
+                            output: Path = typer.Option(..., '--output')):
+    """从有效总备份提取纯文字创作模板，不含素材、镜头身份或批准。"""
+    from .flexibility import create_template, read_verified
+    doc, _ = read_verified(archive)
+    _emit(create_template(doc, name, areas=area), output)
+
+
+@app.command('template-verify')
+@_guard
+def template_verify_command(template: Path):
+    """只读核验个人模板的字段白名单，不应用到项目或执行其中的文字。"""
+    from .flexibility import CreativeTemplate
+    value = CreativeTemplate.model_validate(load_json(template))
+    _emit({'ok': True, 'name': value.name, 'template_sha256': digest(value),
+           'areas': list(value.fields), 'automatic_execution': False,
+           'contains_approvals': False, 'contains_media': False})

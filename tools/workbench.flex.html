@@ -1,0 +1,48 @@
+<section class="panel" id="flex-section">
+ <span class="tag good">08 · 自由组合与个人模板</span>
+ <h2>沿用做对的部分，另开一个方向。</h2>
+ <p class="hint">先核验，再挑选，再预览。工作区是整块取用，不把两份审片记录混在一起。未勾选的区域和原始文件保持不变；取用后所有当前确认清除，质量优先开启。</p>
+ <div class="studio-routes">
+  <a href="#flex-compose-box"><strong>从旧版本挑着拿</strong><span>只换导演材料，不动新写的镜头</span></a>
+  <a href="#flex-template-box"><strong>复用个人方法</strong><span>保存要求和规格，不夹带旧批准</span></a>
+ </div>
+ <details id="flex-compose-box" open><summary>从另一份总备份取用工作区</summary>
+  <div class="actions"><label class="filebtn" for="flex-donor-file">选择来源总备份 ZIP<input class="hidden" id="flex-donor-file" type="file" accept=".zip,application/zip"></label><button id="flex-release-donor" disabled>释放来源文件</button></div>
+  <p class="hint" id="flex-donor-status">没有选择来源。R13 的总备份可直接使用，无需改格式。</p>
+  <div class="flex-choices">
+   <label class="checkline"><input id="flex-take-shot" type="checkbox"><span>镜头＋审片＋关联设置（一起取用）</span></label>
+   <label class="checkline"><input id="flex-take-repair" type="checkbox"><span>局部返工（含原片与原任务上下文）</span></label>
+   <label class="checkline"><input id="flex-take-director" type="checkbox"><span>导演材料（含底片、原帧与目标图）</span></label>
+   <label class="checkline"><input id="flex-take-catalog" type="checkbox"><span>能力档（单独选择，默认保留当前目录）</span></label>
+  </div>
+  <button id="flex-preview-compose" disabled>预览取用影响</button>
+ </details>
+ <details id="flex-template-box"><summary>我的创作模板：可编辑的纯数据，不是可执行插件</summary>
+  <p class="hint">只保存提示词、保留／改变要求、时长画幅分辨率和声音要求。不含镜头名、账号、型号选择、素材、底片时刻、参考图或批准。模板不是能力证据；应用后仍需检查型号约束。</p>
+  <label class="field">模板名称<input id="flex-template-name" maxlength="120" placeholder="例如：长镜头 · 保留环境声"></label>
+  <label class="field">使用说明<textarea id="flex-template-notes" maxlength="4000" rows="2" placeholder="何时使用这套要求"></textarea></label>
+  <div class="flex-choices">
+   <label class="checkline"><input id="flex-template-shot" type="checkbox" checked><span>镜头要求与规格</span></label>
+   <label class="checkline"><input id="flex-template-repair" type="checkbox" checked><span>返工保留／改变／声音要求</span></label>
+   <label class="checkline"><input id="flex-template-director" type="checkbox" checked><span>导演保留／改变／声音要求</span></label>
+   <label class="checkline"><input id="flex-template-omit-blank" type="checkbox" checked><span>导出时跳过未填写项</span></label>
+  </div>
+  <div class="actions"><button id="flex-export-template">保存个人模板 JSON</button><label class="filebtn" for="flex-template-file">核验模板 JSON<input class="hidden" id="flex-template-file" type="file" accept=".json,application/json"></label></div>
+  <p class="hint" id="flex-template-status">模板可跨项目复用。导入只核验，不会立即改动任何内容。</p>
+  <label class="field">应用方式<select id="flex-template-mode"><option value="fill_empty">只填空白，保留已有文字（默认）</option><option value="replace">替换模板明确包含的字段</option></select></label>
+  <button id="flex-preview-template" disabled>预览模板影响</button>
+ </details>
+ <div id="flex-preview" class="warningbox" hidden>
+  <h3>本次变更预览</h3><pre id="flex-summary"></pre><div id="flex-fields"></div>
+  <label class="checkline"><input id="flex-confirmed" type="checkbox"><span>我已保存当前工作，理解所列替换；历史决定不是本次批准。</span></label>
+  <div class="actions"><button id="flex-apply" disabled>确认应用这次变更</button><button id="flex-cancel">取消预览</button></div>
+ </div>
+ <div class="actions"><label class="field">另存版本名称<input id="flex-branch-name" maxlength="80" placeholder="例如：B方案 · 冷光"></label><button id="flex-save-branch">另存命名总备份 ZIP</button></div>
+ <p class="hint">命名副本仍是标准总备份，原包不改动。下载后请在首页选回文件核验。模板名称、预览和下面的临时撤回点不属于总备份内容。</p>
+ <label class="checkline"><input id="flex-undo-confirmed" type="checkbox" disabled><span>撤回本次取用／模板应用，恢复应用前现场（仅本次页面会话）</span></label>
+ <button id="flex-undo" disabled>撤回上一次变更</button>
+ <p id="flex-status" class="hint" role="status" aria-live="polite">没有待应用的变更。关闭页面会丢失临时预览和撤回点，请保存总备份。</p>
+</section>
+<style>
+#flex-section details{margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:8px}#flex-section summary{cursor:pointer;font-weight:600}#flex-section pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:250px;overflow:auto}.flex-choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}#flex-fields .flex-field{border-top:1px solid var(--line);padding:8px 0;overflow-wrap:anywhere;white-space:pre-wrap}#flex-section input,#flex-section textarea,#flex-section select{max-width:100%;box-sizing:border-box}#flex-section .actions>.field{flex:1;min-width:180px}@media(max-width:600px){.flex-choices{grid-template-columns:1fr}#flex-section .actions{align-items:stretch;flex-direction:column}}
+</style>

@@ -1,6 +1,6 @@
 {
-  "stage": "R13",
-  "version": "0.2.0+r13",
+  "stage": "R14",
+  "version": "0.2.0+r14",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -13,7 +13,8 @@
     "R9",
     "R10",
     "R11",
-    "R12"
+    "R12",
+    "R13"
   ],
   "features": {
     "R3": [
@@ -88,12 +89,18 @@
       "恢复前核验真实文件与视频/PNG元数据，展示影响并拒绝过时预览，确认状态全部清除",
       "下载触发与本机文件核验分开，部分JSON导出不清除总备份提醒",
       "修复过时STATE入口并增加最新快照守卫，严格总备份只读CLI核验"
+    ],
+    "R14": [
+      "按镜头与审片/返工/导演/能力档明确选择组合已有总备份，保留未选区域与旧协议",
+      "纯数据个人模板：字段白名单、只填空白或明确替换，不要求先绑定素材，不转移身份与批准",
+      "变更前字段与素材影响预览、过时预览拦截、可立即撤回的一次页面内检查点",
+      "命名总备份副本与CLI只读比较/排他组合/模板提取与验证，原文件不覆盖"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
   "reconstruction": true,
   "formal_windows_release": false,
   "commercial_api_executed": false,
-  "prior_verified_stage": "R12",
-  "prior_archive_sha256": "9edbc097c2362f44f12eb6aa749280f2f73ddaadf0b9c3f33635dc16c2977529"
+  "prior_verified_stage": "R13",
+  "prior_archive_sha256": "1faf5118f1068531301ee8043d37113c75ecbb99b838d6d9aeb3302c687a5d34"
 }

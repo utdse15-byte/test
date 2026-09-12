@@ -1,3 +1,9 @@
+## R14 个人工作流
+
+离线工作台第08区可从总备份按区域取用成果、导出个人文字模板、预览后应用并立即撤回一次，或另存命名副本。新包仍使用Studio/v1，不强制迁移R13备份。
+
+使用入口见 [中文说明](tools/delivery/QUICKSTART_ZH.md)，灵活性梳理见 [R14报告](REPORTS/continuation/R14_PROJECT_REVIEW.md)。质量优先规则保持，模板不是模型执行器或批准。
+
 # Manju One
 
 > **Personal software, Windows-first.** 本仓库是店主个人使用的单用户软件;

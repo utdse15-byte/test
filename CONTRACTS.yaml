@@ -1082,6 +1082,24 @@ schemas:
     write_older: false
     notes: Closed bounded stored ZIP inventory, not a signature. Python hashes and checks PNG structure; browser recovery also probes video metadata and decodes PNGs.
 
+  - id: manju.creative-template/v1
+    kind: schema
+    owner: manju.authoring.flexibility:CreativeTemplate
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Whitelisted raw text only; no automatic identity/media/approval copying. Template text is data, not a script, a model capability or authorization.
+
+  - id: manju.studio-difference/v1
+    kind: schema
+    owner: manju.authoring.flexibility:difference
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Read-only section, field and referenced-media comparison. A report is not a backup, execution input or an approval. Composed files keep Studio/v1.
+
 documents:
   - id: project.yaml
     kind: document

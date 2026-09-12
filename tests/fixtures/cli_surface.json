@@ -435,10 +435,40 @@
       "archive"
     ]
   },
+  "models studio-compose": {
+    "exists": true,
+    "params": [
+      "donor",
+      "output",
+      "take",
+      "target"
+    ]
+  },
+  "models studio-diff": {
+    "exists": true,
+    "params": [
+      "after",
+      "before"
+    ]
+  },
   "models studio-verify": {
     "exists": true,
     "params": [
       "archive"
+    ]
+  },
+  "models template-create": {
+    "exists": true,
+    "params": [
+      "archive",
+      "name",
+      "output"
+    ]
+  },
+  "models template-verify": {
+    "exists": true,
+    "params": [
+      "template"
     ]
   },
   "models verify": {

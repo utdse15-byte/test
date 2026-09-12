@@ -1,7 +1,5 @@
-# Active State: R13 cumulative candidate
+# Active State: R14 cumulative candidate
 
-先完整阅读最新快照：`PROJECT_STATE_2026-09-08_13-51-38.md`。
+先完整阅读最新快照：`PROJECT_STATE_2026-09-12_02-35-17.md`。
 
-个人创作台和三工作区总备份已完成选定回归及真媒体演练，实际下载身份以PACKAGE与独立恢复收据为准。
-
-本指针由测试检查与最新快照一致。旧状态、任务和LAST_GREEN保留；Windows实机与完整回归未标绿。
+组合与模板的采用范围见R14梳理。测试与发布身份以EVIDENCE、PACKAGE及独立恢复收据为准。旧快照、任务和LAST_GREEN保持；Windows、全回归和商业执行未标绿。
