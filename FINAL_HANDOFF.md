@@ -1,7 +1,7 @@
 # Manju R16 维护交接
 
-先读`PROJECT_STATE_2026-09-12_10-59-13.md`和DELIVERY_VERSION.json。基于真实R16 ded624d，当前0.2.0+r16.1；R3/R4仍为功能重建，没有R17源码。
+先读 `PROJECT_STATE_2026-09-12_12-30-33.md` 与DELIVERY_VERSION.json。当前0.2.0+r16.2，从真实R16.1继续开发。
 
-根目录START_HERE是使用入口；本机只读备用不等于自动保存。原协议、工作台和质量名单保持。新下载助手按实际文件哈希识别分段，保存后仍要选回核验。
+普通离线入口仍无Python，OPEN_CONTINUE_WINDOWS.cmd是另选的本机续作入口。必须明确开启，恢复必须预览确认；本机点不替代独立备份。根START_HERE.html与READ_FIRST.md为用户入口。
 
-详细边界见REPORTS/user-ready/VALIDATION.md和tools/delivery/QUICKSTART_ZH.md；不要覆盖旧工程。
+REPORTS/local-continuation/VALIDATION.md记录真实范围。旧恢复格式、质量名单与媒体核心保持。最新SHA、Git提交与下载收据读最终文件，不推断原R17已找回。

@@ -57,9 +57,10 @@ function deskInstallBuffers(doc){
  $('flex-template-mode').value='fill_empty';$('flex-confirmed').checked=false;
  exchangeChanged();flexChanged();
 }
-async function deskPreview(blob){
+async function deskPreview(blob,{source="file"}={}){
+ require(["file","local_recovery"].includes(source),"未知恢复来源，当前工作未改变");
  const guard=deskGuard(),result=await readDesk(blob);require(activeUIOperations<=1&&guard===deskGuard(),'核验期间工作或待处理材料改变，旧结果未应用，请重新打开');
- deskClearRestore();deskState.pending={result,guard};const d=result.document,s=result.studio.document;
+ deskClearRestore();deskState.pending={result,guard,source};const d=result.document,s=result.studio.document;
  $('desk-restore-summary').textContent=`将替换三个工作区和待处理材料，不是自动合并。\n镜头：${s.workspace.draft.form['shot-id']}\n原素材：${s.media.length} 个，${s.media.reduce((n,m)=>n+m.bytes,0)} 字节\n待处理外部改稿：${d.external_edit?Object.keys(d.external_edit.values).length+' 个字段':'无，恢复会清除当前缓冲'}\n已加载模板：${d.personal_template?.name||'无，恢复会清除当前模板'}\n模板名称、说明和命名副本草稿：保留\n当前确认全部清除，质量优先开启；不自动接受外部修改或模板。`;
  $('desk-restore-preview').hidden=false;deskNotice('收工包核验完成。当前工作仍在，请查看恢复预览。');$('desk-restore-preview').scrollIntoView({block:'center'});
 }
@@ -88,9 +89,9 @@ $('desk-restore-confirmed').addEventListener('change',deskChanged);
 $('desk-restore-cancel').addEventListener('click',()=>{deskClearRestore();deskNotice('取消恢复，当前工作和待处理材料不变。');});
 $('desk-restore-apply').addEventListener('click',deskHandled(()=>{
  require(!studioBusy()&&deskState.pending&&$('desk-restore-confirmed').checked,'请核验预览并明确确认');require(deskState.pending.guard===deskGuard(),'预览已过时，不能覆盖新内容');
- const result=deskState.pending.result;deskAssertForm(result.document);assertStudioRepresentable(result.studio.document);
+ const result=deskState.pending.result,localRecovery=deskState.pending.source==="local_recovery";deskAssertForm(result.document);assertStudioRepresentable(result.studio.document);
  studioApplyRaw(result.studio);deskInstallBuffers(result.document);studioClearPending();deskClearRestore();
- deskState.verified=deskFingerprint();studioState.verified=canonical(studioView());deskNotice('收工包已恢复。原素材可直接使用；外部改稿和模板仍待预览，未接受任何修改或批准。');
+ deskState.verified=localRecovery?null:deskFingerprint();studioState.verified=localRecovery?null:canonical(studioView());deskNotice(localRecovery?'已从本机恢复点取回现场。待处理意见和模板尚未应用；没有标记独立备份，请收工时另存 ZIP 并选回核验。':'收工包已恢复。原素材可直接使用；外部改稿和模板仍待预览，未接受任何修改或批准。');
 }));
 // Identification is read-only. Files only enter a real input after a user click.
 function intakeRoute(label,input,section,replace=false,extra={}){return {label,input,section,replace,...extra};}
@@ -168,5 +169,5 @@ document.addEventListener('drop',event=>{
 intakeDrop.addEventListener('keydown',event=>{if(event.target===intakeDrop&&['Enter',' '].includes(event.key)){event.preventDefault();$('intake-files').click();}});
 window.addEventListener('beforeunload',event=>{if(deskNeedsSave()){event.preventDefault();event.returnValue='';}});
 for(const type of ['input','change','click'])document.addEventListener(type,()=>queueMicrotask(deskChanged));
-window.ManjuDesk={state:deskState,isBusy:()=>deskState.busy,changed:deskChanged,needsSave:deskNeedsSave,view:deskBuffers,normalize:normalizeDesk,build:buildDesk,read:readDesk,preview:deskPreview,identify:identifyIntake,prepare:prepareIntake,fingerprint:deskFingerprint};
+window.ManjuDesk={restoreSourceVersion:1,state:deskState,isBusy:()=>deskState.busy,changed:deskChanged,needsSave:deskNeedsSave,view:deskBuffers,normalize:normalizeDesk,build:buildDesk,read:readDesk,preview:deskPreview,identify:identifyIntake,prepare:prepareIntake,fingerprint:deskFingerprint};
 deskChanged();

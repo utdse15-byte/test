@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.1",
+  "version": "0.2.0+r16.2",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -110,7 +110,9 @@
       "收工包保存原格式总备份、待处理外部改稿和已加载模板/文字草稿，完整核验后恢复",
       "下载与本地选回核验分开，跨区/缓冲变更使旧预览失效，不把未接受意见自动应用",
       "坏改稿和坏模板导入不清空旧材料，恢复无法原样写入时拒绝整批覆盖",
-      "只读收工包CLI核验与原字节旧版Studio提取，原十二档和媒体运行代码保持"
+      "只读收工包CLI核验与原字节旧版Studio提取，原十二档和媒体运行代码保持",
+      "可选本机恢复点：主动开启、独立窗口序列、失败保留旧点、原格式收工ZIP导出",
+      "显式区分本机恢复与文件备份来源，恢复不标记独立备份；旧收工协议保持"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
@@ -119,5 +121,5 @@
   "commercial_api_executed": false,
   "prior_verified_stage": "R15",
   "prior_archive_sha256": "312823ef257c2044ca7873fbad19f8984eff5bae261ad671002f06196b300a7b",
-  "maintenance_revision": "user-ready-20260912"
+  "maintenance_revision": "local-continuation-20260912"
 }
