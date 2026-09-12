@@ -35,7 +35,7 @@ def main():
         page.set_content(helper.read_text(encoding='utf-8'),wait_until='load')
         for path in (full,renamed):
             page.locator('#check-file').set_input_files(path);expect(page.locator('#check-status')).to_contain_text('核验通过')
-        page.locator('#check-file').set_input_files(truncated);expect(page.locator('#check-status')).to_contain_text('未通过')
+        page.locator('#check-file').set_input_files(truncated);expect(page.locator('#check-status')).to_have_class('status bad');expect(page.locator('#check-status')).to_contain_text('大小不匹配')
         page.locator('#parts-files').set_input_files(parts[:-1]);expect(page.locator('#join')).to_be_disabled()
         page.locator('#parts-files').set_input_files([parts[0],parts[0],*parts[2:]])
         page.locator('#join').click();expect(page.locator('#parts-status')).to_contain_text('未完成');expect(page.locator('#save')).not_to_be_visible()
