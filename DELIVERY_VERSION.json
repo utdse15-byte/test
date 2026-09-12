@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.3",
+  "version": "0.2.0+r16.4",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -114,7 +114,9 @@
       "可选本机恢复点：主动开启、独立窗口序列、失败保留旧点、原格式收工ZIP导出",
       "显式区分本机恢复与文件备份来源，恢复不标记独立备份；旧收工协议保持",
       "跨工作区按内容与大小找回原文件：改名保真、显式预览、元数据复核、接回前重读、过期预览拒绝",
-      "续作请求的响应正文受完整超时约束，卡住或迟到回执不标记保存成功"
+      "续作请求的响应正文受完整超时约束，卡住或迟到回执不标记保存成功",
+      "恢复点只读内容摘要与筛选，精确字节绑定、坏点不删除、不恢复或授权",
+      "本窗口保留恢复点按保存序列而非系统时钟，倒拨时间不误删较新点"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
@@ -122,7 +124,7 @@
   "formal_windows_release": false,
   "commercial_api_executed": false,
   "prior_verified_stage": "R16",
-  "prior_archive_sha256": "e8639fc37d9fe21e75b01f1584f1a6ec0db6393da14d08f0272ef117f427a04e",
-  "maintenance_revision": "exact-media-relink-20260912",
-  "prior_verified_version": "0.2.0+r16.2"
+  "prior_archive_sha256": "e79ef20b4483e7e6f8fea9c9499a3e6fcab743faade2397d626e1c7a0d9e8524",
+  "maintenance_revision": "read-only-recovery-index-20260912",
+  "prior_verified_version": "0.2.0+r16.3"
 }

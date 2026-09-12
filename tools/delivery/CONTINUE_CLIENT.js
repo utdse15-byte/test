@@ -10,21 +10,26 @@
   panel.innerHTML = `<h2>本机续作 <span class="tag">可选 · 不上传</span></h2>
 <p class="hint">误刷新或重新启动后，从下方恢复点找回工作。只保存三个工作区和已载入的待处理材料，不备份主影片目录。文件在用户主目录的 <code>ManjuRecovery</code>，不是浏览器缓存，也不是独立备份。</p>
 <label class="checkline"><input id="continue-auto" type="checkbox">在本窗口开启自动续作：停笔后保存，每次成功后只保留本窗口最近 3 份；不会清理其他窗口。总容量 2 GiB，最多 64 份，达到上限会暂停。</label>
-<div class="actions"><button type="button" id="continue-save" class="primary">立即存一份恢复点</button><button type="button" id="continue-list">查看已有恢复点</button></div>
+<div class="actions"><button type="button" id="continue-save" class="primary">立即存一份恢复点</button><button type="button" id="continue-list" aria-controls="continue-points" aria-expanded="false">查看已有恢复点</button></div>
 <p id="continue-status" class="status" role="status" aria-live="polite">尚未开启自动续作。只有点击保存或主动勾选后才写入。仍可正常使用首页收工包。</p>
-<details id="continue-points"><summary>已有恢复点：核验、取回或另存</summary>
-<p id="continue-usage" class="hint"></p><label class="field">选择一份恢复点<select id="continue-choice"><option value="">尚未读取</option></select></label>
+<div id="continue-points" hidden role="region" aria-label="已有恢复点"><div class="actions"><h3>已有恢复点：核验、取回或另存</h3><button type="button" id="continue-hide" aria-controls="continue-points">收起列表</button></div>
+<p id="continue-usage" class="hint"></p>
+<div class="actions"><button type="button" id="continue-index">读取内容摘要（只读）</button><button type="button" id="continue-index-stop" hidden>停止读取后续摘要</button></div>
+<p id="continue-index-status" class="hint" role="status" aria-live="polite">摘要只在主动点击后读取，不上传、不恢复、不改动原文件。大型恢复点需要读取完整校验值。</p>
+<label class="field">筛选已读取的内容<input id="continue-search" type="search" maxlength="240" placeholder="镜头名、方案名、提示词、返工或导演要求"></label>
+<p id="continue-filter-status" class="hint" role="status"></p>
+<div id="continue-summary" class="warningbox" hidden></div><label class="field">选择一份恢复点<select id="continue-choice"><option value="">尚未读取</option></select></label>
 <div class="actions"><button type="button" id="continue-preview" disabled>核验并预览恢复</button><button type="button" id="continue-download" disabled>另存收工 ZIP</button><button type="button" id="continue-delete" class="danger" disabled>删除所选恢复点</button><button type="button" id="continue-clean" hidden>清理中断的临时写入</button></div>
-<p class="hint">列表不代表已解码视频。恢复仍使用原来的完整核验和明确确认；不会自动接受意见、选片或生成。删除前先下载需要的副本。</p></details>
+<p class="hint">列表不代表已解码视频。恢复仍使用原来的完整核验和明确确认；不会自动接受意见、选片或生成。删除前先下载需要的副本。</p></div>
 <p class="warningbox">同一块硬盘上的恢复点不能防止硬盘损坏、目录误删或机器丢失。收工时仍应下载收工 ZIP 并选回核验。保存尚未成功、正在输入或服务已停止时，不保证最后修改可恢复。</p>`;
   document.querySelector('main').prepend(panel);
   const styles = document.createElement('style');
-  styles.textContent = '#continue-panel{overflow-wrap:anywhere}#continue-panel select{max-width:100%;min-width:0}#continue-panel code{overflow-wrap:anywhere}#continue-panel .actions{display:flex;flex-wrap:wrap}#continue-panel .actions button{min-width:0;white-space:normal}#continue-panel .checkline{line-height:1.65}';
+  styles.textContent = '#continue-panel{overflow-wrap:anywhere}#continue-panel select{max-width:100%;min-width:0}#continue-panel code{overflow-wrap:anywhere}#continue-panel .actions{display:flex;flex-wrap:wrap}#continue-panel .actions button{min-width:0;white-space:normal}#continue-panel .checkline{line-height:1.65}#continue-points h3{flex:1;min-width:160px;margin:.4em 0}#continue-hide{flex:0 0 auto;min-width:88px;white-space:nowrap!important}';
   document.head.append(styles);
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   const windowId = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
   const local = {busy:false, sequence:0, last:null, observed:ManjuDesk.fingerprint(),
-    changed:Date.now(), attempted:0, points:[], localPending:null, lastPoint:null};
+    changed:Date.now(), attempted:0, points:[], summaries:new Map(), summaryErrors:new Map(), scanning:false, stopScan:false, noticeAfterBusy:false, localPending:null, lastPoint:null};
   const note = (text, error=false) => { $('continue-status').textContent = text; $('continue-status').classList.toggle('error', error); };
   const fingerprint = () => ManjuDesk.fingerprint();
   const humanSize = n => (n / 1024 / 1024).toFixed(2) + ' MiB';
@@ -32,11 +37,15 @@
     const selected = local.points.some(p => p.id === $('continue-choice').value);
     for (const id of ['continue-preview','continue-download','continue-delete']) $(id).disabled=local.busy||!selected;
     $('continue-save').disabled=local.busy; $('continue-list').disabled=local.busy; $('continue-clean').disabled=local.busy;
+    $('continue-index').disabled=local.busy||!local.points.length;
+    $('continue-index-stop').hidden=!local.scanning;
   }
   function observed() {
-    const value=fingerprint();
-    if(value!==local.observed){local.observed=value;local.changed=Date.now();
-      if(!local.busy && value!==local.last) note($('continue-auto').checked?'有新修改，等待停笔后写入本机恢复点。尚未保存这份新输入。':'有新修改尚未存入恢复点；可立即保存，或下载首页收工包。');
+    const value=fingerprint(),changed=value!==local.observed;
+    if(changed){local.observed=value;local.changed=Date.now();local.noticeAfterBusy=true;}
+    if(!local.busy&&local.noticeAfterBusy){
+      local.noticeAfterBusy=false;
+      if(value!==local.last)note($('continue-auto').checked?'有新修改，等待停笔后写入本机恢复点。尚未保存这份新输入。':'有新修改尚未存入恢复点；可立即保存，或下载首页收工包。');
     }
     return value;
   }
@@ -60,22 +69,76 @@
     })();
     try{return await Promise.race([operation,timeout]);}finally{clearTimeout(timer);}
   }
+  const summaryKey = record => record.id+':'+record.sha256;
+  const taskNames = {create:'从零创建',animate:'静帧动画',bridge:'连接首尾帧',edit:'视频编辑',extend:'视频延展',reference:'参考生成',perform:'表演参考'};
+  function showSummary() {
+    const record=local.points.find(p=>p.id===$('continue-choice').value);
+    const box=$('continue-summary');box.replaceChildren();box.hidden=!record;
+    if(!record)return;
+    const value=local.summaries.get(summaryKey(record));
+    if(!value){box.textContent=local.summaryErrors.has(summaryKey(record))?'该恢复点的摘要未通过核验。原文件保留，不代表无法由旧版恢复；可先另存检查。':'尚未读取这份内容；点击上方“读取内容摘要”后再筛选。';return;}
+    const line=(label,text)=>{const row=document.createElement('p');row.textContent=label+'：'+text;box.append(row);};
+    line('镜头',value.shot_id.trim()||'未命名');
+    if(value.branch_name.trim())line('方案',value.branch_name);
+    line('任务',taskNames[value.task]||value.task||'未指定');
+    line('内容摘录',value.prompt||'尚未填写');
+    line('素材与审片',`${value.media_files} 份素材 · ${humanSize(value.media_bytes)} · ${value.candidates} 个候选 · ${value.review_records} 条历史审片`);
+    line('返工',value.has_repair_video?'已含原视频'+(value.repair_note?' · '+value.repair_note:''):'未绑定原视频'+(value.repair_note?' · '+value.repair_note:''));
+    line('导演材料',`${value.has_director_video?'已含运动底片':'未绑定运动底片'} · ${value.director_anchors} 个关键时刻`+(value.director_note?' · '+value.director_note:''));
+    line('尚未处理',`${value.pending_external_edit?'含外部改稿':'无外部改稿'}；${value.pending_template?'含个人模板 '+value.template_name:'无待处理模板'}`);
+    line('范围','仅显示已校验字节中的文字摘要，长文会截短；没有解码视频、恢复现场或确认独立备份。');
+  }
+  function drawChoices(preferred=$('continue-choice').value) {
+    const query=$('continue-search').value.trim().toLocaleLowerCase();
+    const visible=local.points.filter(p=>{
+      if(!query)return true;
+      const value=local.summaries.get(summaryKey(p));
+      return value&&[value.shot_id,value.branch_name,value.prompt,value.repair_note,value.director_note,value.template_name,p.created_utc].join('\n').toLocaleLowerCase().includes(query);
+    });
+    $('continue-choice').replaceChildren(...visible.map(p=>{
+      const value=local.summaries.get(summaryKey(p)),o=document.createElement('option');o.value=p.id;
+      o.textContent=(value?((value.shot_id.trim()||'未命名')+(value.branch_name.trim()?' / '+value.branch_name.trim():'')):'未读内容')+' · '+new Date(p.created_utc).toLocaleString()+' · '+humanSize(p.bytes)+' · 窗口 '+p.window.slice(0,8);
+      return o;
+    }));
+    if(!visible.length){const o=document.createElement('option');o.value='';o.textContent=local.points.length?'没有匹配的已读摘要':'没有已发布的恢复点';$('continue-choice').append(o);}
+    if(visible.some(p=>p.id===preferred))$('continue-choice').value=preferred;
+    const unread=local.points.filter(p=>!local.summaries.has(summaryKey(p))).length;
+    $('continue-filter-status').textContent=`显示 ${visible.length} / ${local.points.length} 份；${unread} 份尚无可用摘要。筛选只查已读短摘要，不搜索完整提示词或媒体内容。`;
+    showSummary();syncButtons();
+  }
   async function refresh(open=false) {
     const data=await request('points');
     const prior=$('continue-choice').value;local.points=data.points;
-    $('continue-choice').replaceChildren(...data.points.map(p=>{
-      const o=document.createElement('option');o.value=p.id;
-      o.textContent=new Date(p.created_utc).toLocaleString()+' · '+humanSize(p.bytes)+' · 窗口 '+p.window.slice(0,8);
-      return o;
-    }));
-    if(!data.points.length){const o=document.createElement('option');o.value='';o.textContent='没有已发布的恢复点';$('continue-choice').append(o);}
-    if(data.points.some(p=>p.id===prior))$('continue-choice').value=prior;
+    const current=new Set(data.points.map(summaryKey));
+    for(const map of [local.summaries,local.summaryErrors])for(const key of map.keys())if(!current.has(key))map.delete(key);
     $('continue-usage').textContent=`已存 ${data.points.length} 份，使用 ${humanSize(data.bytes_used)} / ${humanSize(data.maximum_bytes)}。`+
       (data.damaged.length?`有 ${data.damaged.length} 份不完整目录，保留未覆盖；请在恢复目录另存检查。`:'')+
       (data.unfinished?`上次中断留下 ${data.unfinished} 个临时写入，可明确清理；已完成恢复点不受影响。`:'');
     $('continue-clean').hidden=!data.unfinished;
-    if(open)$('continue-points').open=true;
-    syncButtons();return data;
+    if(open){$('continue-points').hidden=false;$('continue-list').setAttribute('aria-expanded','true');}
+    drawChoices(prior);return data;
+  }
+  async function readSummaries() {
+    if(local.busy||ManjuDesk.isBusy())return;
+    local.busy=true;local.scanning=true;local.stopScan=false;syncButtons();
+    $('continue-index-status').textContent='开始重新读取恢复点列表与摘要，先前结果不是本次核验完成。';
+    let done=0,failed=0;
+    try{
+      await refresh(true);
+      const pending=local.points.slice();
+      for(const record of pending){
+        if(local.stopScan)break;
+        $('continue-index-status').textContent=`正在核验摘要 ${done+1} / ${pending.length}。可以继续编辑；本次读取不写入恢复点。`;
+        try{
+          const result=await request('points/'+record.id+'/summary',{headers:{'X-Manju-Sha256':record.sha256}});
+          if(result.point?.id!==record.id||result.point?.sha256!==record.sha256||result.point?.bytes!==record.bytes||result.summary?.schema_id!=='manju.recovery-summary/v1'||result.summary.restored!==false||result.summary.independent_backup!==false)throw new Error('摘要与所选恢复点不符');
+          if(local.points.some(p=>summaryKey(p)===summaryKey(record))){local.summaries.set(summaryKey(record),result.summary);local.summaryErrors.delete(summaryKey(record));}
+        }catch(error){failed++;local.summaries.delete(summaryKey(record));local.summaryErrors.set(summaryKey(record),String(error.message));}
+        done++;drawChoices();
+      }
+      $('continue-index-status').textContent=(local.stopScan?'已停止读取后续摘要。':'摘要读取完成。')+`本次读取 ${done} 份，${failed} 份未能核验。原文件和当前工作不变；刷新页面后需重新读取摘要。`;
+    }catch(error){$('continue-index-status').textContent='摘要未完成：'+error.message+'。当前工作和原文件未改变。';}
+    finally{local.busy=false;local.scanning=false;syncButtons();observed();}
   }
   async function save({automatic=false}={}) {
     if(automatic&&!$('continue-auto').checked)return;
@@ -136,7 +199,11 @@
   }
   $('continue-save').addEventListener('click',()=>save());
   $('continue-list').addEventListener('click',()=>refresh(true).catch(e=>note('无法读取恢复点：'+e.message,true)));
-  $('continue-choice').addEventListener('change',syncButtons);
+  $('continue-choice').addEventListener('change',()=>{showSummary();syncButtons();});
+  $('continue-search').addEventListener('input',()=>drawChoices());
+  $('continue-hide').addEventListener('click',()=>{$('continue-points').hidden=true;$('continue-list').setAttribute('aria-expanded','false');$('continue-list').focus();});
+  $('continue-index').addEventListener('click',readSummaries);
+  $('continue-index-stop').addEventListener('click',()=>{local.stopScan=true;$('continue-index-status').textContent='已请求停止；当前一次校验结束或超时后，不再读取下一份。';});
   for(const [id,kind]of [['continue-preview','preview'],['continue-download','download'],['continue-delete','delete']])$(id).addEventListener('click',()=>selectedAction(kind));
   $('continue-clean').addEventListener('click',async()=>{
     if(local.busy||!confirm('仅清理中断后尚未发布的临时写入？已完成恢复点和当前页面不变。'))return;
@@ -159,5 +226,5 @@
   window.addEventListener('pageshow',()=>{local.changed=Date.now();watch();});
   watch();
   refresh().catch(e=>note('续作目录暂不可读：'+e.message+' 普通收工下载仍可使用。',true));
-  window.ManjuContinuation={state:local,save,refresh,hashBlob,selectedAction,windowId,isWatching:()=>timer!==null};
+  window.ManjuContinuation={state:local,save,refresh,readSummaries,drawChoices,hashBlob,selectedAction,windowId,isWatching:()=>timer!==null};
 })();

@@ -20,6 +20,7 @@ import re
 import secrets
 import shutil
 import stat
+import struct
 import sys
 import tempfile
 import threading
@@ -151,6 +152,112 @@ def validate_envelope(path):
         raise RecoveryError('Invalid or unreadable recovery ZIP') from exc
 
 
+def checkpoint_summary(stream):
+    """Read small descriptive metadata from an already SHA-verified Desk stream.
+
+    This is a read-only index, not a restore validator or a video decoder. No
+    files are extracted and no media payload is decoded or returned. The old
+    POINT.json and Desk/Studio formats remain unchanged. Nested ZIP metadata is
+    bounded before json parsing; text is shortened only in this display result.
+    """
+    def document(archive, name):
+        items = [i for i in archive.infolist() if i.filename == name]
+        if len(items) != 1:
+            raise RecoveryError('Summary metadata missing or duplicated')
+        item = items[0]
+        if (not 0 < item.file_size <= 2 * 1024 * 1024 or item.is_dir()
+                or item.compress_type != zipfile.ZIP_STORED or item.flag_bits & ~0x800
+                or item.extra or item.comment or stat.S_ISLNK(item.external_attr >> 16)):
+            raise RecoveryError('Summary metadata shape refused')
+        value = read_json(archive.read(item))
+        if not isinstance(value, dict):
+            raise RecoveryError('Summary metadata must be an object')
+        return value
+
+    def obj(value):
+        if not isinstance(value, dict):
+            raise RecoveryError('Summary field is not an object')
+        return value
+
+    def text(value, limit=240):
+        if not isinstance(value, str):
+            raise RecoveryError('Summary text field refused')
+        # Never change stored drafts; these are display-only snippets.
+        return value[:limit]
+
+    def array(value):
+        if not isinstance(value, list) or len(value) > 4096:
+            raise RecoveryError('Summary list field refused')
+        return value
+
+    try:
+        with zipfile.ZipFile(stream) as outer:
+            if len(outer.infolist()) != 3 or set(outer.namelist()) != {'DESK.json', 'STUDIO.zip', 'MANIFEST.json'}:
+                raise RecoveryError('Summary requires a closed Desk ZIP')
+            desk = document(outer, 'DESK.json')
+            if (desk.get('schema_id') != 'manju.desk-session/v1'
+                    or any(desk.get(k) is not False for k in ('automatic_execution', 'project_modified', 'confirmations_restored'))):
+                raise RecoveryError('Summary Desk identity refused')
+            inner_info = outer.getinfo('STUDIO.zip')
+            if (inner_info.compress_type != zipfile.ZIP_STORED or not 0 < inner_info.file_size <= MAX_POINT
+                    or inner_info.flag_bits & ~0x800 or stat.S_ISLNK(inner_info.external_attr >> 16)):
+                raise RecoveryError('Summary Studio shape refused')
+            # seekable ZipExtFile avoids loading a large inner media ZIP in RAM.
+            with outer.open(inner_info) as inner_stream:
+                inner_stream.seek(-22, os.SEEK_END)
+                end = inner_stream.read(22)
+                if len(end) != 22:
+                    raise RecoveryError('Summary Studio trailer refused')
+                signature, disk, central_disk, local_count, count, size, offset, comment = struct.unpack('<4s4H2IH', end)
+                if (signature != b'PK\x05\x06' or disk or central_disk or comment
+                        or local_count != count or not 1 <= count <= 4098
+                        or size > 2 * 1024 * 1024 or offset + size != inner_info.file_size - 22):
+                    raise RecoveryError('Summary Studio directory exceeds bounds')
+                inner_stream.seek(0)
+                with zipfile.ZipFile(inner_stream) as inner:
+                    studio = document(inner, 'STUDIO.json')
+        if (studio.get('schema_id') != 'manju.studio-session/v1'
+                or any(studio.get(k) is not False for k in ('automatic_execution', 'project_modified', 'confirmations_restored'))):
+            raise RecoveryError('Summary Studio identity refused')
+        workspace = obj(studio.get('workspace'))
+        form = obj(obj(workspace.get('draft')).get('form'))
+        review = workspace.get('review')
+        candidates = array(obj(obj(review).get('session')).get('candidates')) if review is not None else []
+        decisions = array(obj(review).get('decisions')) if review is not None else []
+        director, repair = obj(studio.get('director')), obj(studio.get('repair'))
+        media = array(studio.get('media'))
+        media_bytes = 0
+        for entry in media:
+            size = obj(entry).get('bytes')
+            if type(size) is not int or not 0 < size <= 128 * 1024 * 1024:
+                raise RecoveryError('Summary media size refused')
+            media_bytes += size
+        if media_bytes > 512 * 1024 * 1024:
+            raise RecoveryError('Summary media total refused')
+        scratch = obj(desk.get('scratch_form'))
+        template = desk.get('personal_template')
+        return {'schema_id': 'manju.recovery-summary/v1',
+                'shot_id': text(form.get('shot-id', ''), 160),
+                'prompt': text(form.get('prompt', '')),
+                'task': text(form.get('task', ''), 64),
+                'branch_name': text(scratch.get('flex-branch-name', ''), 160),
+                'media_files': len(media), 'media_bytes': media_bytes,
+                'candidates': len(candidates), 'review_records': len(decisions),
+                'has_repair_video': repair.get('source') is not None,
+                'repair_note': text(obj(repair.get('form')).get('repair-change', '')),
+                'has_director_video': director.get('source') is not None,
+                'director_anchors': len(array(director.get('anchors'))),
+                'director_note': text(obj(director.get('form')).get('director-change', '')),
+                'pending_external_edit': desk.get('external_edit') is not None,
+                'pending_template': template is not None,
+                'template_name': text(obj(template).get('name', ''), 160) if template is not None else '',
+                'video_decode_verified': False, 'restored': False, 'independent_backup': False}
+    except (zipfile.BadZipFile, KeyError, TypeError, ValueError, EOFError, OSError) as exc:
+        if isinstance(exc, RecoveryError):
+            raise
+        raise RecoveryError('Recovery summary unavailable; original point retained') from exc
+
+
 class RecoveryStore:
     def __init__(self, root: Path, *, maximum=MAX_TOTAL, count=MAX_POINTS, keep=KEEP_PER_WINDOW):
         self.root = root.absolute()
@@ -249,7 +356,9 @@ class RecoveryStore:
             raise RecoveryError('Upload identity or size refused')
         with self.locked(create=True):
             records, damaged, pending, used = self._records()
-            own = [r for r in records if r['window'] == window]
+            # Sequence, not wall-clock time, determines this window's newest points.
+            own = sorted((r for r in records if r['window'] == window),
+                         key=lambda r: r['sequence'], reverse=True)
             if own and sequence <= max(r['sequence'] for r in own):
                 raise RecoveryError('Stale save sequence refused; newer point kept')
             # Reserve before reading. Do not remove an old point to make room.
@@ -327,6 +436,16 @@ class RecoveryStore:
             except BaseException:
                 stream.close()
                 raise
+
+    def inspect(self, point_id, expected_hash):
+        if not isinstance(expected_hash, str) or not HEX.fullmatch(expected_hash):
+            raise RecoveryError('Summary checksum required')
+        record, stream = self.load(point_id)
+        with stream:
+            if record['sha256'] != expected_hash:
+                raise RecoveryError('Summary target changed; refresh the list')
+            summary = checkpoint_summary(stream)
+        return {'ok': True, 'point': record, 'summary': summary}
 
     def _remove(self, point_id, expected):
         record = self._record(self.root / point_id)
@@ -457,6 +576,11 @@ def create_server(root, recovery_root):
                     return self.respond(200, payload, 'text/html; charset=utf-8')
                 if name == 'points':
                     return self.respond(200, store.list())
+                if name.startswith('points/') and name.endswith('/summary') and ID.fullmatch(name[7:-8]):
+                    hashes = self.headers.get_all('X-Manju-Sha256', [])
+                    if len(hashes) != 1:
+                        raise RecoveryError('One summary checksum is required')
+                    return self.respond(200, store.inspect(name[7:-8], hashes[0]))
                 if name.startswith('points/') and ID.fullmatch(name[7:]):
                     record, stream = store.load(name[7:])
                     try:
