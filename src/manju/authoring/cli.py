@@ -267,3 +267,74 @@ def template_verify_command(template: Path):
     _emit({'ok': True, 'name': value.name, 'template_sha256': digest(value),
            'areas': list(value.fields), 'automatic_execution': False,
            'contains_approvals': False, 'contains_media': False})
+
+
+@app.command('external-create')
+@_guard
+def external_create_command(archive: Path,
+                            section: Optional[list[str]] = typer.Option(None, '--section'),
+                            output: Path = typer.Option(..., '--output')):
+    """导出可编辑文字 JSON；改 values，不改导出基线、批准或素材。"""
+    from .exchange import create_edit
+    from .flexibility import read_verified
+    doc, _ = read_verified(archive)
+    _emit(create_edit(doc, section), output)
+
+
+@app.command('external-kit')
+@_guard
+def external_kit_command(archive: Path,
+                         section: Optional[list[str]] = typer.Option(None, '--section'),
+                         without_media: bool = typer.Option(False, '--without-media'),
+                         output: Path = typer.Option(..., '--output')):
+    """按区域导出 TXT、可编辑 JSON 与原素材，不转码，不覆盖。"""
+    from .exchange import export_kit
+    _emit(export_kit(archive, output, section, include_media=not without_media))
+
+
+@app.command('external-texts')
+@_guard
+def external_texts_command(edit: Path, text: list[Path] = typer.Option(..., '--text'),
+                           output: Path = typer.Option(..., '--output')):
+    """把外部 UTF-8 text-材料ID-xxx.txt 带回对应 EDIT.json，尚不应用。"""
+    from .exchange import overlay_texts, read_edit
+    files = {}
+    total = 0
+    for path in text:
+        if path.is_symlink() or not path.is_file() or path.name in files:
+            raise AuthoringError('text files must be regular with unique basenames')
+        with path.open('rb') as stream:
+            data = stream.read(120004)
+        if len(data) > 120003:
+            raise AuthoringError('text file exceeds UTF-8 bound')
+        total += len(data)
+        if total > 2 * 1024 * 1024:
+            raise AuthoringError('selected text exceeds 2 MiB')
+        files[path.name] = data
+    _emit(overlay_texts(read_edit(edit), files), output)
+
+
+@app.command('external-preview')
+@_guard
+def external_preview_command(archive: Path, edit: Path,
+                             output: Optional[Path] = typer.Option(None, '--output')):
+    """只读三方比较；输出预览哈希，应用时须传回以阻断过时预览。"""
+    from .exchange import preview_edit, read_edit
+    from .flexibility import read_verified
+    doc, _ = read_verified(archive)
+    preview = preview_edit(doc, read_edit(edit))
+    _emit({'preview': preview, 'preview_sha256': digest(preview)}, output)
+
+
+@app.command('external-apply')
+@_guard
+def external_apply_command(archive: Path, edit: Path,
+                           take: list[str] = typer.Option(..., '--take'),
+                           preview_sha256: str = typer.Option(..., '--preview-sha256'),
+                           confirm: bool = typer.Option(False, '--confirm'),
+                           output: Path = typer.Option(..., '--output')):
+    """逐字段确认后新建总备份；原包、媒体和历史决定保持不变。"""
+    from .exchange import apply_archive, read_edit
+    if not confirm:
+        raise AuthoringError('preview first, then explicitly pass --confirm with selected fields')
+    _emit(apply_archive(archive, read_edit(edit), take, output, expected_preview=preview_sha256))

@@ -30,6 +30,34 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  - id: manju.external-edit/v1
+    kind: schema
+    owner: manju.authoring.exchange:ExternalEdit
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Data-only externally editable fields with immutable export baseline and content-scoped three-way merge. Never approvals or model capabilities.
+
+  - id: manju.external-edit-preview/v1
+    kind: schema
+    owner: manju.authoring.exchange:preview_edit
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Read-only three-way field report, bound to current values and external edit; explicit field choices required.
+
+  - id: manju.external-media-map/v1
+    kind: schema
+    owner: manju.authoring.exchange:media_index
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Original media paths, names and role mapping for external tools; byte identity only, not quality or origin certification.
+
+
   - id: manju.creative-charter/v1
     kind: schema
     owner: manju.core.creative:CreativeCharter

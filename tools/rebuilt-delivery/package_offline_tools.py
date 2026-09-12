@@ -14,7 +14,7 @@ def build(repo:Path,output:Path):
     if status.strip():raise ValueError('Commit the source first')
     version=json.loads((repo/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))
     stage=version['stage']
-    if stage not in {'R7','R8','R9','R10','R11','R12','R13','R14'}:raise ValueError('This compact toolkit requires R7 or later')
+    if stage not in {'R7','R8','R9','R10','R11','R12','R13','R14','R15'}:raise ValueError('This compact toolkit requires R7 or later')
     head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=repo).decode().strip()
     html=(repo/'tools/model_workbench.html').read_bytes()
     if html!=(repo/'src/manju/authoring/data/workbench.html').read_bytes():raise ValueError('Standalone and installed workbench differ')
@@ -76,6 +76,7 @@ SHA256SUMS.json：本包内部文件哈希，不是发布者数字签名。
       'preserve':[],'change':[],'stage':'draft','approved_draft_sha256':None}
     payload={
       'OPEN_MODEL_WORKBENCH.html':html,
+      **({'INTERCHANGE_GUIDE.md':(repo/f'REPORTS/continuation/{stage}_INTERCHANGE_MATRIX.md').read_bytes()} if (repo/f'REPORTS/continuation/{stage}_INTERCHANGE_MATRIX.md').is_file() else {}),
       'MODEL_CATALOG.json':(repo/'src/manju/authoring/data/catalog.json').read_bytes(),
       **({'QUALITY_SHORTLIST.json':(repo/'src/manju/authoring/data/quality.json').read_bytes()} if (repo/'src/manju/authoring/data/quality.json').is_file() else {}),
       'EXAMPLE_REQUEST.json':(json.dumps(example,ensure_ascii=False,indent=2)+'\n').encode(),

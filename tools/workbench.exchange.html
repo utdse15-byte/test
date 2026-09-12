@@ -1,0 +1,40 @@
+<section class="panel" id="exchange-section">
+ <span class="tag good">09 · 外部工具往返</span>
+ <h2>把内容带出去，带回修改而不是覆盖。</h2>
+ <p class="hint">选择要交给外部工具的区域。文字可以用编辑器或外部模型改，原图、视频和音频按原字节带走。返回后逐字段比较导出原文、当前本地与外部修改；只应用你确认勾选的字段。</p>
+ <details open><summary>导出可编辑材料</summary>
+  <div class="flex-choices">
+   <label class="checkline"><input id="exchange-shot" type="checkbox" checked><span>镜头文字与输入素材</span></label>
+   <label class="checkline"><input id="exchange-review" type="checkbox"><span>待提交审片说明与候选（不含批准操作）</span></label>
+   <label class="checkline"><input id="exchange-repair" type="checkbox" checked><span>返工文字、时间范围与原片</span></label>
+   <label class="checkline"><input id="exchange-director" type="checkbox" checked><span>导演要求、每个锚点目标文字与原图原片</span></label>
+   <label class="checkline"><input id="exchange-settings" type="checkbox"><span>返回像素与定稿分辨率设置</span></label>
+  </div>
+  <label class="checkline"><input id="exchange-media" type="checkbox" checked><span>ZIP 包含所选区域的实际素材（缺文件就拒绝，不压缩画质；纯文字 JSON 不需要重绑）</span></label>
+  <div class="actions"><button id="exchange-export-json">导出可编辑 EDIT.json</button><button id="exchange-export-kit" class="primary">导出外部编辑材料 ZIP</button></div>
+  <p class="hint">ZIP 解压后有 EDIT.json、独立 texts/*.txt、素材用途映射与带扩展名的 media/ 文件。修改 JSON 的 values，或者修改独立 TXT。只回传 JSON / TXT，不需要重新打包 ZIP。可用空白清空字段，不会自动执行。</p>
+ </details>
+ <details open><summary>取回外部文字，逐项选择</summary>
+  <div class="actions"><label class="filebtn" for="exchange-import-json">加载 EDIT.json<input id="exchange-import-json" class="hidden" type="file" accept=".json,application/json"></label><label class="filebtn" for="exchange-import-texts">再加载改过的 TXT（可多选）<input id="exchange-import-texts" class="hidden" type="file" accept=".txt,text/plain" multiple disabled></label><button id="exchange-preview" disabled>预览返回修改</button><button id="exchange-save-returned" disabled>另存未应用的外部改稿</button><button id="exchange-clear">释放外部材料</button></div>
+  <p id="exchange-import-status" class="hint">尚未加载修改。TXT 必须与本次 EDIT.json 的编号对应；UTF-8 BOM 可接受，CRLF/CR 会明确转为 LF，其他空白保留。</p>
+ </details>
+ <div id="exchange-preview-box" class="warningbox" hidden>
+  <h3>三方比较：原文 / 当前 / 外部</h3>
+  <p id="exchange-summary"></p><div id="exchange-rows"></div>
+  <p class="hint">冲突默认不选；底片、镜头身份或关键帧已换的旧修改不可强行套入。未勾选项保留当前本地内容，原素材、能力目录和审片历史不变。</p>
+  <label class="checkline"><input id="exchange-confirmed" type="checkbox"><span>我已检查选中字段，确认带回这些文字；它们不是新的生成或审片批准。</span></label>
+  <div class="actions"><button id="exchange-apply" disabled>只应用勾选字段</button><button id="exchange-cancel">取消预览</button></div>
+ </div>
+ <div class="actions"><button id="exchange-report" disabled>下载最近一次比较 / 应用记录</button></div>
+ <label class="checkline"><input id="exchange-undo-confirmed" type="checkbox" disabled><span>撤回刚才的外部文字应用（仅当前页面，继续编辑后锁定）</span></label><button id="exchange-undo" disabled>撤回外部文字</button>
+ <p id="exchange-status" class="hint" role="status" aria-live="polite">导出交换材料不是备份，不会清除未备份提醒。关闭页面前另存总备份，外部改稿缓冲区不包含在总备份中，请用“另存未应用的外部改稿”单独保存。</p>
+ <details><summary>哪些能往返，哪些不能假装通用导入？</summary>
+  <p>原影片工程：已有 <code>manju pack</code> / <code>manju unpack</code>；页面三个工作区：总备份与单区 ZIP；模型能力档：JSON 预览替换；个人模板：JSON。</p>
+  <p>剪辑：Manju 自己导出的 OTIO、FCPXML、剪映差异骨架有受限回程，需原导出基线并逐项确认；任意外来 FCPXML、EDL、OpenClap 只生成导入计划，不等于已还原整个工程。字幕、样式、特效并非所有格式都双向无损。</p>
+  <p>外部媒体结果：用第02区按用途绑定；候选用第05区添加；精修目标图用第07区对应锚点绑定。媒体内容变了就是新文件，不按文件名静默替换旧候选。此区只把文字带回，不导入脚本、账号、批准或任意工程文件。</p>
+  <p>原片和目标图都可能含隐私；只勾选需要分享的区域。说明/映射只作材料清单；文件哈希不证明作者身份、版权或模型质量。</p>
+ </details>
+</section>
+<style>
+#exchange-section details{margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:8px}#exchange-section summary{cursor:pointer;font-weight:600}#exchange-rows{display:grid;gap:12px;max-height:620px;overflow:auto}#exchange-rows .exchange-row{border:1px solid var(--line);border-radius:8px;padding:12px;background:var(--paper);min-width:0;overflow-wrap:anywhere}#exchange-rows pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:140px;overflow:auto;margin:5px 0}#exchange-rows .exchange-columns{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}#exchange-section .hint{overflow-wrap:anywhere}@media(max-width:650px){#exchange-rows .exchange-columns{grid-template-columns:1fr}#exchange-section .actions{flex-direction:column;align-items:stretch}}
+</style>

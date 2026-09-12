@@ -51,7 +51,7 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
         raise ValueError('Commit source and documentation before packaging')
     version = json.loads((repo/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))
     stage = version['stage']
-    if stage not in {'R8','R9','R10','R11','R12','R13','R14'}:
+    if stage not in {'R8','R9','R10','R11','R12','R13','R14','R15'}:
         raise ValueError('Unsupported cumulative stage')
     head, tree = git('rev-parse','HEAD').strip(), git('rev-parse','HEAD^{tree}').strip()
     names = [n for n in git('ls-files','-z').split('\0') if n]
@@ -84,7 +84,8 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
         shutil.copy2(repo/'tools/model_workbench.html',root/'OPEN_MODEL_WORKBENCH.html')
         for name, target_name in [(f'{stage}_X_RESEARCH.md','MODEL_RESEARCH.md'),
                                   (f'{stage}_VALIDATION.md','VALIDATION.md'),
-                                  (f'{stage}_PROJECT_REVIEW.md','PROJECT_REVIEW.md')]:
+                                  (f'{stage}_PROJECT_REVIEW.md','PROJECT_REVIEW.md'),
+                                  (f'{stage}_INTERCHANGE_MATRIX.md','INTERCHANGE_GUIDE.md')]:
             report = repo/'REPORTS/continuation'/name
             if report.is_file():shutil.copy2(report,root/target_name)
         intro=(repo/'tools/delivery/QUICKSTART_ZH.md').read_text(encoding='utf-8').replace('R7',stage)
@@ -104,7 +105,9 @@ def build(repo: Path, output: Path, evidence: Path) -> dict:
             if original.is_file() and original.suffix.lower() in {'.json','.xml','.log','.md','.txt','.rc','.png','.mp4'}:
                 if original.stat().st_size>32*1024*1024:raise ValueError('Evidence file unexpectedly large')
                 dst=ev/original.relative_to(evidence);dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(original,dst)
-        (ev/'wheel-build.log').write_text(wheel_log,encoding='utf-8')
+        if (ev/'PACKAGE_WHEEL_BUILD.log').exists():
+            raise ValueError('Packaging log name collides with supplied evidence')
+        (ev/'PACKAGE_WHEEL_BUILD.log').write_text(wheel_log,encoding='utf-8')
         meta={**version,'git_head':head,'git_tree':tree,'wheel':'wheels/'+wheel.name,
               'created_at':datetime.now(timezone.utc).isoformat(),
               'prior_verified_stage':version.get('prior_verified_stage','R7'),

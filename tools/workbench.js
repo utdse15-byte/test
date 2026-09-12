@@ -137,7 +137,7 @@ function strictJSON(text){
 async function parseFile(file){require(file&&file.size<=2*1024*1024,'JSON 最大 2 MiB');return strictJSON(await file.text());}
 async function importRequest(file){let value=await parseFile(file),context=null;if(value.schema_id==='manju.project-authoring-import/v1'){require(await hash(value.source_plan)===value.source_plan_sha256,'原项目上下文哈希不符');context={source_plan:value.source_plan,source_plan_sha256:value.source_plan_sha256,warnings:value.warnings||[]};value=value.request;}const request=normalizeRequest(value);state.generation++;state.files=new Map([...state.files].filter(([h])=>request.assets.some(a=>a.sha256===h)));state.sourceContext=context;fillRequest(request);showContext();invalidate();status('已导入任务。媒体字节未写入草稿，请重新选择本地文件绑定；原工程没有被修改。');}
 function showContext(){$('source-details').hidden=!state.sourceContext;$('source-context').textContent=state.sourceContext?JSON.stringify(state.sourceContext,null,2):'';}
-function handled(fn){return async(...args)=>{activeUIOperations++;try{await fn(...args);}catch(e){status(e.message||String(e),true);}finally{activeUIOperations--;window.ManjuStudio?.changed();window.ManjuFlex?.changed();}};}
+function handled(fn){return async(...args)=>{activeUIOperations++;try{await fn(...args);}catch(e){status(e.message||String(e),true);}finally{activeUIOperations--;window.ManjuStudio?.changed();window.ManjuFlex?.changed();window.ManjuExchange?.changed();}};}
 for(const id of ['shot-id','task','prompt','duration','resolution','ratio','preserve','change'])$(id).addEventListener('input',invalidate);
 $('reviewer').addEventListener('input',()=>{$('human-confirmed').checked=false;persist();});
 $('check-plan').addEventListener('click',handled(renderPlan));$('asset-files').addEventListener('change',handled(e=>addFiles([...e.target.files])));
@@ -160,4 +160,5 @@ window.ManjuWorkbench={SHA256,normalizeRequest,normalizeCatalog,modeReport,optio
 // DIRECTOR_SCRIPT
 // STUDIO_SCRIPT
 // FLEX_SCRIPT
+// EXCHANGE_SCRIPT
 })();

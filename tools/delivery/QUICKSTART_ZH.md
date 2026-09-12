@@ -1,4 +1,4 @@
-# Manju R14：可组合的个人创作台
+# Manju R15：面向外部工具的个人创作台
 
 这是累计修复候选，不是 Windows 正式发布认证。R3/R4 保留的是重建功能，不是丢失原包的字节级复原。
 
@@ -15,6 +15,42 @@
 总备份仅覆盖此离线页面三个区，不包括整个影片工程、外部剪辑器项目、账号、未绑定磁盘文件、播放器位置、派生报告或未应用的预览。影片项目目录仍需独立备份。
 
 原有单区 Workspace、Repair、Director ZIP 继续可用。R14 新导出的总备份仍是 Studio/v1，R13 可以核验和恢复，不需要迁移旧文件。
+
+## R15：外部编辑器或模型改稿
+
+首页点“外部工具往返”，进入第09区。勾选镜头、待提交审片说明、返工、导演材料和规格设置中需要的部分。默认不分享候选审片与设置，要用时明确勾选。
+
+点击“导出外部编辑材料 ZIP”，下载并解压。包内 `EDIT.json` 的 `values` 可以修改；不要改 `base`、`contexts`、`base_sha256`、字段名和其他元数据。也可以根据README的映射编辑 `texts/text-材料ID-xxx.txt`，保留文件名，保存为UTF-8。使用一种修改方式即可；TXT载入时会覆盖对应JSON的values。空文件表示明确清空。
+
+`media/` 是原字节素材，带可识别扩展名；`MEDIA_MAP.json` 列原名、内容校验值和所有用途。不是视频压缩包，也没有上传模型服务。只要想带文字、不想分享视频，可导出纯JSON；取消包含素材时ZIP也会明确标出实物未包含。缺原文件时，不会制造假完整材料。
+
+回到第09区“加载EDIT.json”。改的是TXT，则先加载对应原EDIT.json，再选择改过的TXT。点击“预览返回修改”，比较原文、本地新稿和外部改稿。双方都改的字段默认不勾选；你可明确选择冲突项，但对应底片/镜头/锚点已经变了的旧修改不能强套。
+
+核对后勾选确认，只应用已选字段。没有选的外部改动不丢进工作区，也不覆盖本地。应用后首页另存总备份；原素材、能力档与审片历史保持，当前确认清除。改镜头创作意图后回到草稿，不继承旧批准。
+
+**没决定的修改可以先保存。** “另存未应用的外部改稿”会保存当前载入JSON及TXT修改，不碰工作区；未应用缓冲、预览和撤回点不包含在总备份。关闭页面前单独保存需要的改稿文件。最近一次比较/应用记录也能单独下载，但不是可执行生产输入。
+
+TXT支持UTF-8 BOM，CRLF/CR明确变成LF，其他空白保留。JSON里不要手工写入浏览器会清空的非法数字或不适用换行；遇到问题整次不写入，按错误提示修正。应用后可立即撤回一次；继续编辑会锁定旧撤回点。
+
+外部模型返回的新图片/视频/音频，请用现有素材/候选/锚点入口绑定，不通过修改媒体哈希冒充旧原片。第09区仅带回文字，不替你选片、付款或写回主影片工程。
+
+### 命令行可直接处理
+
+```text
+manju models external-create STUDIO.zip --section shot --section director --output EDIT.json
+manju models external-kit STUDIO.zip --section shot --section director --output EXTERNAL.zip
+manju models external-texts EDIT.json --text texts/text-材料ID-001.txt --output RETURNED.json
+manju models external-preview STUDIO.zip RETURNED.json --output PREVIEW.json
+manju models external-apply STUDIO.zip RETURNED.json --take shot/prompt --preview-sha256 PREVIEW中的preview_sha256 --confirm --output NEW_STUDIO.zip
+```
+
+将示例中的材料ID/字段/预览哈希换成实际输出。最后一条只写新备份，不覆盖旧文件；每个冲突仍需明确`--take`。读入外部材料或本地包变化后，旧预览哈希不能用。结果仍是Studio/v1。
+
+## 全项目外部入口怎么选
+
+完整工程迁移用`manju pack`/`unpack`，离线工作区用总备份，外部改文字用第09区。已有角色参考/剧集模板的专用导入，字幕与剪辑也有入口，但不是任意格式双向无损。详见同目录 `INTERCHANGE_GUIDE.md`；小工具包也附此指南，但不含主影片程序。
+
+保留从本项目导出时的`.baseline`，OTIO/FCPXML/剪映差异骨架才能走受限回程；任意外来FCPXML/EDL/OpenClap只读生成计划，不自动还原工程。PSD/EXR/Blend、任意原生剪辑项目和全部特效样式均不属于R15文本交换协议。
 
 ## R14：从旧方案挑着拿
 

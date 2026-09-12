@@ -389,6 +389,45 @@
       "output"
     ]
   },
+  "models external-apply": {
+    "exists": true,
+    "params": [
+      "archive",
+      "edit",
+      "output",
+      "preview_sha256",
+      "take"
+    ]
+  },
+  "models external-create": {
+    "exists": true,
+    "params": [
+      "archive",
+      "output"
+    ]
+  },
+  "models external-kit": {
+    "exists": true,
+    "params": [
+      "archive",
+      "output"
+    ]
+  },
+  "models external-preview": {
+    "exists": true,
+    "params": [
+      "archive",
+      "edit"
+    ]
+  },
+  "models external-texts": {
+    "exists": true,
+    "params": [
+      "edit",
+      "output",
+      "text"
+    ]
+  },
   "models from-shot": {
     "exists": true,
     "params": [

@@ -1,6 +1,6 @@
 {
-  "stage": "R14",
-  "version": "0.2.0+r14",
+  "stage": "R15",
+  "version": "0.2.0+r15",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -14,7 +14,8 @@
     "R10",
     "R11",
     "R12",
-    "R13"
+    "R13",
+    "R14"
   ],
   "features": {
     "R3": [
@@ -95,12 +96,19 @@
       "纯数据个人模板：字段白名单、只填空白或明确替换，不要求先绑定素材，不转移身份与批准",
       "变更前字段与素材影响预览、过时预览拦截、可立即撤回的一次页面内检查点",
       "命名总备份副本与CLI只读比较/排他组合/模板提取与验证，原文件不覆盖"
+    ],
+    "R15": [
+      "按区域导出可编辑JSON、独立UTF-8文字与原字节素材，媒体用途/原名可查且不转码",
+      "逐字段原文/当前/外部三方比较，冲突显式选择、上下文变更拦截、过时预览拒绝",
+      "原编号绑定TXT回传、未完成草稿纯文字交换、一次会话内撤回",
+      "五个离线CLI提供编辑/材料导出、文字回填、只读预览和预览哈希约束的新总备份",
+      "梳理整工程、剪辑、字幕、候选、能力档的真实进出边界，原协议与质量名单保持"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
   "reconstruction": true,
   "formal_windows_release": false,
   "commercial_api_executed": false,
-  "prior_verified_stage": "R13",
-  "prior_archive_sha256": "1faf5118f1068531301ee8043d37113c75ecbb99b838d6d9aeb3302c687a5d34"
+  "prior_verified_stage": "R14",
+  "prior_archive_sha256": "179e736e226c737865dacd563d691119d61fea982cc7b8759779271aa3a1aa0c"
 }

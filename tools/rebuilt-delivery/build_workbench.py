@@ -34,6 +34,8 @@ template=template.replace('<!-- STUDIO_SECTION -->',(root/'tools/workbench.studi
 script=script.replace('// STUDIO_SCRIPT',(root/'tools/workbench.studio.js').read_text(encoding='utf-8'))
 template=template.replace('<!-- FLEX_SECTION -->',(root/'tools/workbench.flex.html').read_text(encoding='utf-8'))
 script=script.replace('// FLEX_SCRIPT',(root/'tools/workbench.flex.js').read_text(encoding='utf-8'))
+template=template.replace('<!-- EXCHANGE_SECTION -->',(root/'tools/workbench.exchange.html').read_text(encoding='utf-8'))
+script=script.replace('// EXCHANGE_SCRIPT',(root/'tools/workbench.exchange.js').read_text(encoding='utf-8'))
 # Do not allow JSON strings or program string literals to close a script tag.
 html=template.replace('__CATALOG__',catalog.replace('</','<\\/')).replace('__SCRIPT__',script.replace('</script','<\\/script')).replace('__RELEASE__',release).replace('__QUALITY__',quality.replace('</','<\\/'))
 for path in [root/'tools/model_workbench.html',root/'src/manju/authoring/data/workbench.html']:

@@ -5,7 +5,7 @@ const studioState={busy:false,pending:null,baseline:null,verified:null,serial:0}
 function studioRawForm(ids){return Object.fromEntries(ids.map(id=>[id,$(id).value]));}
 function studioView(){return {workspace:workspaceView(),repair:{form:studioRawForm(REPAIR_FORM),request:clone(repairState.request),source:clone(repairState.source)},director:{form:studioRawForm(DIRECTOR_FORM),source:clone(directorState.source),anchors:clone(directorState.anchors)},auxiliary_form:studioRawForm(STUDIO_AUXILIARY_FORM)};}
 function studioDocumentView(doc){const w=doc.workspace;return {workspace:{draft:w.draft,catalog:w.catalog,review:w.review,pending:w.pending,review_form:w.review_form,reveal:w.reveal},repair:doc.repair,director:doc.director,auxiliary_form:doc.auxiliary_form};}
-function studioBusy(){return Boolean(window.ManjuFlex?.isBusy())||activeUIOperations>1||studioState.busy||workspaceBusy||state.busy||reviewState.busy||repairState.busy||directorState.busy;}
+function studioBusy(){return Boolean(window.ManjuExchange?.isBusy())||Boolean(window.ManjuFlex?.isBusy())||activeUIOperations>1||studioState.busy||workspaceBusy||state.busy||reviewState.busy||repairState.busy||directorState.busy;}
 function studioGuard(){return canonical({view:studioView(),quality:$('quality-only').checked,revisions:[state.revision,state.generation,reviewState.revision,reviewState.formRevision,repairState.revision,directorState.revision,catalogRevision.serial]});}
 function studioMedia(doc){
  const required=requiredWorkspaceMedia(doc.workspace),geometry=new Map();
