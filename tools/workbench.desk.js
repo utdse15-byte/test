@@ -3,7 +3,7 @@
 const DESK_FORM=['flex-template-name','flex-template-notes','flex-branch-name'];
 const DESK_KEYS=['schema_id','studio_archive_sha256','external_edit','personal_template','scratch_form','confirmations_restored','automatic_execution','project_modified'];
 const deskState={busy:false,pending:null,verified:null,intake:null,intakeSerial:0};
-function deskBuffers(){return {external_edit:clone(exchangeState.edit),personal_template:clone(flexState.template),scratch_form:studioRawForm(DESK_FORM)};}
+function deskBuffers(){return {external_edit:clone(exchangeState.edit),personal_template:clone(flexState.template),scratch_form:studioRawForm(DESK_FORM),...(window.ManjuStory?.view()===null?{}:{story:window.ManjuStory.view()})};}
 function deskFingerprint(){return canonical({view:studioView(),buffers:deskBuffers()});}
 function deskGuard(){return canonical({studio:studioGuard(),buffers:deskBuffers()});}
 const deskInitialBuffers=canonical(deskBuffers());
@@ -17,7 +17,7 @@ async function scanBlob(blob){
  return {sha256:sha.hex(),crc:(crc^0xffffffff)>>>0};
 }
 async function normalizeDesk(value){
- exactKeys(value,DESK_KEYS,'收工包');require(value.schema_id==='manju.desk-session/v1'&&hashPattern.test(value.studio_archive_sha256)&&value.confirmations_restored===false&&value.automatic_execution===false&&value.project_modified===false,'收工包版本、身份或人工边界无效');
+ const hasStory=value?.schema_id==='manju.desk-session/v2';exactKeys(value,hasStory?[...DESK_KEYS,'story']:DESK_KEYS,'收工包');if(hasStory)storyNormalize(value.story);require(['manju.desk-session/v1','manju.desk-session/v2'].includes(value.schema_id)&&hashPattern.test(value.studio_archive_sha256)&&value.confirmations_restored===false&&value.automatic_execution===false&&value.project_modified===false,'收工包版本、身份或人工边界无效');
  if(value.external_edit!==null)await normalizeExchange(value.external_edit);
  if(value.personal_template!==null)normalizeTemplate(value.personal_template);
  studioForm(value.scratch_form,DESK_FORM);
@@ -29,7 +29,7 @@ function deskAssertForm(doc){
 }
 async function buildDesk(){
  const guard=deskGuard(),buffers=deskBuffers(),studio=await buildStudio(),scan=await scanBlob(studio.blob);
- const document=await normalizeDesk({schema_id:'manju.desk-session/v1',studio_archive_sha256:scan.sha256,...buffers,confirmations_restored:false,automatic_execution:false,project_modified:false});
+ const document=await normalizeDesk({schema_id:buffers.story?'manju.desk-session/v2':'manju.desk-session/v1',studio_archive_sha256:scan.sha256,...buffers,confirmations_restored:false,automatic_execution:false,project_modified:false});
  const data=jsonBytes(document),manifest=jsonBytes({schema_id:'manju.desk-manifest/v1',files:{'DESK.json':await hash(data),'STUDIO.zip':scan.sha256}});
  require(activeUIOperations<=1&&guard===deskGuard(),'保存期间工作或待处理材料改变，未导出过时收工包');
  return {document,studio,guard,blob:zipStore([{name:'DESK.json',data,crc:crc32(data)},{name:'STUDIO.zip',data:studio.blob,crc:scan.crc},{name:'MANIFEST.json',data:manifest,crc:crc32(manifest)}])};
@@ -46,6 +46,7 @@ async function readDesk(blob){
 }
 function deskClearRestore(){deskState.pending=null;$('desk-restore-preview').hidden=true;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;}
 function deskInstallBuffers(doc){
+ storyInstall(doc.story||null);
  exchangeClearPreview();exchangeState.edit=clone(doc.external_edit);exchangeState.undo=null;exchangeState.lastReport=null;exchangeState.serial++;
  $('exchange-preview').disabled=!exchangeState.edit;$('exchange-import-texts').disabled=!exchangeState.edit;$('exchange-report').disabled=true;
  $('exchange-import-status').textContent=exchangeState.edit?'已恢复待处理外部改稿。尚未应用，请重新预览三方比较。':'收工包内没有待处理外部改稿，旧缓冲已清除。';
@@ -61,25 +62,25 @@ async function deskPreview(blob,{source="file"}={}){
  require(["file","local_recovery"].includes(source),"未知恢复来源，当前工作未改变");
  const guard=deskGuard(),result=await readDesk(blob);require(activeUIOperations<=1&&guard===deskGuard(),'核验期间工作或待处理材料改变，旧结果未应用，请重新打开');
  deskClearRestore();deskState.pending={result,guard,source};const d=result.document,s=result.studio.document;
- $('desk-restore-summary').textContent=`将替换三个工作区和待处理材料，不是自动合并。\n镜头：${s.workspace.draft.form['shot-id']}\n原素材：${s.media.length} 个，${s.media.reduce((n,m)=>n+m.bytes,0)} 字节\n待处理外部改稿：${d.external_edit?Object.keys(d.external_edit.values).length+' 个字段':'无，恢复会清除当前缓冲'}\n已加载模板：${d.personal_template?.name||'无，恢复会清除当前模板'}\n模板名称、说明和命名副本草稿：保留\n当前确认全部清除，质量优先开启；不自动接受外部修改或模板。`;
+ $('desk-restore-summary').textContent=`将替换三个工作区和待处理材料，不是自动合并。\n镜头：${s.workspace.draft.form['shot-id']}\n原素材：${s.media.length} 个，${s.media.reduce((n,m)=>n+m.bytes,0)} 字节\n待处理外部改稿：${d.external_edit?Object.keys(d.external_edit.values).length+' 个字段':'无，恢复会清除当前缓冲'}\n已加载模板：${d.personal_template?.name||'无，恢复会清除当前模板'}\n故事工作本：${d.story?d.story.scenes.length+'场 / '+d.story.briefs.length+'份简报（包含作者资料）':'无；当前故事工作本会清除'}\n模板名称、说明和命名副本草稿：保留\n当前确认全部清除，质量优先开启；不自动接受外部修改或模板。`;
  $('desk-restore-preview').hidden=false;deskNotice('收工包核验完成。当前工作仍在，请查看恢复预览。');$('desk-restore-preview').scrollIntoView({block:'center'});
 }
 function deskChanged(){
  if(deskState.pending&&deskState.pending.guard!==deskGuard()){deskState.pending=null;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;$('desk-restore-summary').textContent='预览后工作或待处理材料已变化，旧预览失效。请重新打开收工包；新内容没有被覆盖。';}
  if(deskState.intake&&deskState.intake.guard!==deskGuard()){deskState.intake=null;$('intake-open').disabled=true;$('intake-confirmed').checked=false;intakeNotice('识别后工作已变化，请重新选择文件；未导入或覆盖新内容。');}
  if(deskState.verified&&deskNeedsSave())deskNotice('有未核验的新修改或待处理材料。此前收工包仍在，请重新保存并选回文件核验。',false,'dirty');
- $('desk-inventory').textContent=`当前：原素材 ${studioBindings().size} 个；待处理外部改稿 ${exchangeState.edit?'1 份':'无'}；已加载模板 ${flexState.template?'1 份':'无'}。`;
+ $('desk-inventory').textContent=`当前：原素材 ${studioBindings().size} 个；故事 ${window.ManjuStory?.view()?.scenes.length||0} 场；待处理外部改稿 ${exchangeState.edit?'1 份':'无'}；已加载模板 ${flexState.template?'1 份':'无'}。`;
  $('desk-restore-apply').disabled=!deskState.pending||!$('desk-restore-confirmed').checked;
  const choice=deskState.intake?.routes[Number($('intake-destination').value)];$('intake-replace-note').hidden=!choice?.replace;$('intake-open').disabled=!choice||(choice.replace&&!$('intake-confirmed').checked);
 }
 function deskHandled(fn){return handled(async event=>{try{await fn(event);}catch(error){deskNotice('未完成：'+(error.message||error),true);throw error;}finally{deskChanged();}});}
 $('desk-save').addEventListener('click',deskHandled(async()=>{
  require(!studioBusy(),'其他文件操作仍在进行');deskState.busy=true;
- try{const result=await buildDesk();require(result.guard===deskGuard(),'工作已变化，请重试');download(result.blob,'MANJU_DESK_'+(await hash(result.document)).slice(0,12)+'.zip');deskNotice('已发起收工包下载。包含原工作现场和待处理改稿 / 模板；请保存后选回文件核验，尚不能声称已落盘。');}finally{deskState.busy=false;}
+ try{const result=await buildDesk();require(result.guard===deskGuard(),'工作已变化，请重试');download(result.blob,'MANJU_DESK_'+(await hash(result.document)).slice(0,12)+'.zip');deskNotice('已发起收工包下载。包含原工作现场、待处理改稿 / 模板与已启用的故事工作本；请保存后选回文件核验，尚不能声称已落盘。');}finally{deskState.busy=false;}
 }));
 $('desk-verify-file').addEventListener('change',deskHandled(async event=>{
  const file=event.target.files[0];if(!file)return;require(!studioBusy(),'其他文件操作仍在进行');deskState.busy=true;const guard=deskGuard();
- try{const result=await readDesk(file);require(guard===deskGuard()&&activeUIOperations<=1,'核验期间内容改变，未标记备份');const buffers={external_edit:result.document.external_edit,personal_template:result.document.personal_template,scratch_form:result.document.scratch_form};
+ try{const result=await readDesk(file);require(guard===deskGuard()&&activeUIOperations<=1,'核验期间内容改变，未标记备份');const buffers={external_edit:result.document.external_edit,personal_template:result.document.personal_template,scratch_form:result.document.scratch_form,...(result.document.story?{story:result.document.story}:{})};
   const matches=canonical({view:studioDocumentView(result.studio.document),buffers})===deskFingerprint();
   if(matches){deskState.verified=deskFingerprint();studioState.verified=canonical(studioView());state.dirty=false;reviewState.dirty=false;repairState.dirty=false;directorState.dirty=false;deskNotice('已核验你选回的收工包，三个工作区和待处理材料均与当前一致。只核验，没有替换工作。');}
   else deskNotice('所选收工包有效，但与当前工作或待处理材料不同。没有替换，也没有把新修改标为已备份。');
@@ -114,7 +115,7 @@ async function identifyIntake(files){
   const entries=await storedZipMembers(file,'intake');const markers=['DESK.json','STUDIO.json','WORKSPACE.json','PLAN.json','EDIT.json','REQUEST.json'].filter(n=>entries.has(n));
   require(markers.length===1,'无法唯一识别此 ZIP。完整影片包或示例合集请先解压，再打开其中的材料文件。');
   const name=markers[0],entry=entries.get(name),bytes=new Uint8Array(await entry.data.arrayBuffer());require(crc32(bytes)===entry.crc,'材料元数据 CRC 不符');const doc=strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
-  if(name==='DESK.json'&&doc.schema_id==='manju.desk-session/v1')return {kind:'desk',summary:'收工包：三个工作区与待处理改稿 / 模板。下一步先完整核验并预览，不立即恢复。',routes:[intakeRoute('核验并预览恢复收工包',null,'desk-restore-preview',false,{desk:true})]};
+  if(name==='DESK.json'&&['manju.desk-session/v1','manju.desk-session/v2'].includes(doc.schema_id))return {kind:'desk',summary:doc.schema_id==='manju.desk-session/v2'?'新收工包：故事工作本、三个工作区与待处理改稿 / 模板。含作者计划，分享前检查范围。下一步先核验预览，不立即恢复。':'收工包：三个工作区与待处理改稿 / 模板。下一步先完整核验并预览，不立即恢复。',routes:[intakeRoute('核验并预览恢复收工包',null,'desk-restore-preview',false,{desk:true})]};
   if(name==='STUDIO.json'&&doc.schema_id==='manju.studio-session/v1')return {kind:'studio',summary:'三个工作区的旧版总备份。可以完整恢复，也可以只取用其中一个工作区。',routes:[intakeRoute('核验并预览完整恢复','import-studio','studio-home'),intakeRoute('只取用部分工作区','flex-donor-file','flex-section')]};
   if(name==='WORKSPACE.json'&&doc.schema_id==='manju.authoring-workspace/v1')return {kind:'workspace',summary:'镜头与审片现场；不包含独立返工和导演区。',routes:[intakeRoute('核验并恢复镜头与审片','import-workspace','workspace-section')]};
   if(name==='PLAN.json'&&doc.schema_id==='manju.repair-plan/v1')return {kind:'repair',summary:'局部返工材料，包含原片。目标入口会重新核验并要求确认。',routes:[intakeRoute('打开返工材料','repair-import','repair-section')]};
@@ -125,6 +126,7 @@ async function identifyIntake(files){
  require(file.size<=2*1024*1024,'未知文件不作为 JSON 读取；JSON 最大 2 MiB');
  const doc=strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()));require(doc&&typeof doc==='object'&&!Array.isArray(doc),'材料必须是带版本标记的对象');
  const routes={
+  'manju.story-notebook/v1':['story','故事工作本：包含作者计划、人物依据、场景和旧简报。不含原素材，也不自动改写当前镜头。',intakeRoute('预览故事工作本','story-file','story-section')],
   'manju.retouch-task/v1':['retouch','静帧精修任务；选回原 TASK.json 后核验，再选择实际返回 PNG。不是完整备份。',intakeRoute('载入静帧精修任务','retouch-task','retouch-section')],
   'manju.model-request/v1':['request','镜头任务，不含媒体。导入会替换上方任务，原工程不变。',intakeRoute('导入镜头任务','import-request','workspace-section',true)],
   'manju.project-authoring-import/v1':['request','主影片只读导出的镜头与上下文。此页修改不会自动写回原工程。',intakeRoute('导入工程镜头','import-request','workspace-section',true)],

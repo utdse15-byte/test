@@ -123,7 +123,7 @@ def validate_envelope(path):
             # Bound metadata before reading. ZipFile verifies each CRC as read.
             desk = read_json(z.read('DESK.json'))
             manifest = read_json(z.read('MANIFEST.json'))
-            if (not isinstance(desk, dict) or desk.get('schema_id') != 'manju.desk-session/v1'
+            if (not isinstance(desk, dict) or desk.get('schema_id') not in ('manju.desk-session/v1', 'manju.desk-session/v2')
                     or any(desk.get(k) is not False for k in ('automatic_execution', 'project_modified', 'confirmations_restored'))
                     or not isinstance(manifest, dict) or set(manifest) != {'schema_id', 'files'}
                     or manifest['schema_id'] != 'manju.desk-manifest/v1'
@@ -195,7 +195,7 @@ def checkpoint_summary(stream):
             if len(outer.infolist()) != 3 or set(outer.namelist()) != {'DESK.json', 'STUDIO.zip', 'MANIFEST.json'}:
                 raise RecoveryError('Summary requires a closed Desk ZIP')
             desk = document(outer, 'DESK.json')
-            if (desk.get('schema_id') != 'manju.desk-session/v1'
+            if (desk.get('schema_id') not in ('manju.desk-session/v1', 'manju.desk-session/v2')
                     or any(desk.get(k) is not False for k in ('automatic_execution', 'project_modified', 'confirmations_restored'))):
                 raise RecoveryError('Summary Desk identity refused')
             inner_info = outer.getinfo('STUDIO.zip')
@@ -236,7 +236,7 @@ def checkpoint_summary(stream):
             raise RecoveryError('Summary media total refused')
         scratch = obj(desk.get('scratch_form'))
         template = desk.get('personal_template')
-        return {'schema_id': 'manju.recovery-summary/v1',
+        result = {'schema_id': 'manju.recovery-summary/v1',
                 'shot_id': text(form.get('shot-id', ''), 160),
                 'prompt': text(form.get('prompt', '')),
                 'task': text(form.get('task', ''), 64),
@@ -252,6 +252,16 @@ def checkpoint_summary(stream):
                 'pending_template': template is not None,
                 'template_name': text(obj(template).get('name', ''), 160) if template is not None else '',
                 'video_decode_verified': False, 'restored': False, 'independent_backup': False}
+        if desk['schema_id'] == 'manju.desk-session/v2':
+            story = obj(desk.get('story'))
+            if story.get('schema_id') != 'manju.story-notebook/v1':
+                raise RecoveryError('Summary story identity refused')
+            scenes, sources, briefs = array(story.get('scenes')), array(story.get('sources')), array(story.get('briefs'))
+            if len(scenes)>512 or len(sources)>512 or len(briefs)>128:
+                raise RecoveryError('Summary story count refused')
+            result['story_summary'] = {'title':text(story.get('title','')), 'scenes':len(scenes),
+                                       'sources':len(sources), 'briefs':len(briefs)}
+        return result
     except (zipfile.BadZipFile, KeyError, TypeError, ValueError, EOFError, OSError) as exc:
         if isinstance(exc, RecoveryError):
             raise

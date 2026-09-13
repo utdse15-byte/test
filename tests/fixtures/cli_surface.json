@@ -493,6 +493,33 @@
       "archive"
     ]
   },
+  "models story-brief": {
+    "exists": true,
+    "params": [
+      "output",
+      "scene",
+      "story"
+    ]
+  },
+  "models story-check": {
+    "exists": true,
+    "params": [
+      "story"
+    ]
+  },
+  "models story-from-series": {
+    "exists": true,
+    "params": [
+      "output",
+      "series"
+    ]
+  },
+  "models story-kit-verify": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "models studio-compose": {
     "exists": true,
     "params": [

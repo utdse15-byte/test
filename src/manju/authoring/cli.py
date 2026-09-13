@@ -362,3 +362,35 @@ def retouch_verify_command(archive: Path):
     """只读核验静帧精修交接包；不是生成服务、完整备份或画质认证。"""
     from .retouch import verify_kit
     _emit(verify_kit(archive))
+
+
+@app.command('story-check')
+@_guard
+def story_check_command(story: Path):
+    """只读核验故事工作本及简报依赖版本；不是剧情或画质自动验收。"""
+    from .story import read_story, report
+    _emit(report(read_story(story)))
+
+
+@app.command('story-brief')
+@_guard
+def story_brief_command(story: Path, scene: str, output: Path = typer.Option(..., '--output')):
+    """按已保存的范围与真实场序导出当前场景上下文，不覆盖已有文件。"""
+    from .story import compile_brief, read_story
+    _emit(compile_brief(read_story(story), scene), output)
+
+
+@app.command('story-from-series')
+@_guard
+def story_from_series_command(series: Path, output: Path = typer.Option(..., '--output')):
+    """只读接入原剧集共享 Bible；默认作者资料，不猜测角色知情或剧情场景。"""
+    from .story import from_series
+    _emit(from_series(series), output)
+
+
+@app.command('story-kit-verify')
+@_guard
+def story_kit_verify_command(archive: Path):
+    """只读核验简报与原参考字节，不代表当前依赖、语义、画质或模型身份认证。"""
+    from .story import verify_brief_kit
+    _emit(verify_brief_kit(archive))

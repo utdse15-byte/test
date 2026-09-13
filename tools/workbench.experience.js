@@ -24,7 +24,7 @@
  const toolsLabel=document.createElement('summary');toolsLabel.textContent='任务文件、能力档与单区备份';tools.append(toolsLabel);
  if(oldToolbar){oldToolbar.before(tools);tools.append(oldToolbar);}
  if($('workspace-section'))tools.append($('workspace-section'));
- register(tools,'shot');register($('catalog-preview'),'shot');
+ register(tools,'shot');register($('catalog-preview'),'shot');register($('story-section'),'shot');
  const grid=main.querySelector(':scope > .grid');if(grid){grid.id='ux-shot';register(grid,'shot');}
  for(const key of ['review','director','repair','exchange','flex'])register($(views[key].target),key);
  // Keep old backup controls available, but stop competing with the daily save action.
@@ -109,6 +109,7 @@
  function connectContinuation(){const panel=$('continue-panel');if(panel&&!nodes.has(panel)){register(panel,'home');$('studio-home').after(panel);present({scroll:false});}}
  new MutationObserver(connectContinuation).observe(main,{childList:true});connectContinuation();
  const commands=[
+  {name:'故事、人物与制作版本',description:'作品形态、真实场序、知情范围、参考职责与变更复核。',target:'story-section',words:'剧情 长篇 人物 伏笔 前情 故事 版本 关系'},
   {name:'原尺寸查看关键帧与目标图',description:'进入导演区，点击缩略图打开大图。只查看，不修改或批准。',target:'director-anchors',words:'大图 放大 100% 看图 对比 精修 原图'},
   ...Object.entries(views).map(([key,v])=>({name:v.title,description:v.note,target:v.target,words:key})),
   {name:'找回改名 / 搬家的素材',description:'按内容核对原文件，不按同名替换。',target:'relink-panel',words:'缺失 重新绑定 hash 原片'},

@@ -22,6 +22,7 @@ from .exchange import ExternalEdit
 from .flexibility import CreativeTemplate
 from .studio import verify_studio, _file_identity
 from .workspace import MAX_JSON, MAX_TOTAL, json_value
+from .story import Story
 
 MAX_STUDIO = MAX_TOTAL + 4 * 1024 * 1024
 MAX_ARCHIVE = MAX_TOTAL + 8 * 1024 * 1024
@@ -57,6 +58,17 @@ class Desk(BaseModel):
         if len(canonical(self)) > MAX_JSON:
             raise ValueError('desk metadata exceeds 2 MiB; save external drafts separately')
         return self
+
+
+class StoryDesk(Desk):
+    """Versioned optional extension; v1 inputs/output remain byte-compatible."""
+    schema_id: Literal['manju.desk-session/v2']
+    story: Story
+
+
+def parse_desk(value: dict) -> Desk | StoryDesk:
+    model = StoryDesk if isinstance(value, dict) and value.get('schema_id') == 'manju.desk-session/v2' else Desk
+    return model.model_validate(value)
 
 
 def _directory(path: Path, archive: zipfile.ZipFile) -> None:
@@ -113,7 +125,7 @@ def verify_desk(path: Path) -> dict:
     try:
         with zipfile.ZipFile(path) as archive:
             _directory(path, archive)
-            document = Desk.model_validate(json_value(archive.read('DESK.json')))
+            document = parse_desk(json_value(archive.read('DESK.json')))
             manifest = json_value(archive.read('MANIFEST.json'))
             if (not isinstance(manifest, dict) or set(manifest) != {'schema_id', 'files'} or
                     manifest['schema_id'] != 'manju.desk-manifest/v1' or

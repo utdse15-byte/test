@@ -78,6 +78,7 @@
     const value=local.summaries.get(summaryKey(record));
     if(!value){box.textContent=local.summaryErrors.has(summaryKey(record))?'该恢复点的摘要未通过核验。原文件保留，不代表无法由旧版恢复；可先另存检查。':'尚未读取这份内容；点击上方“读取内容摘要”后再筛选。';return;}
     const line=(label,text)=>{const row=document.createElement('p');row.textContent=label+'：'+text;box.append(row);};
+    if(value.story_summary)line('故事工作本',`${value.story_summary.title||'未命名'} · ${value.story_summary.scenes} 场 · ${value.story_summary.sources} 项依据 · ${value.story_summary.briefs} 份简报`);
     line('镜头',value.shot_id.trim()||'未命名');
     if(value.branch_name.trim())line('方案',value.branch_name);
     line('任务',taskNames[value.task]||value.task||'未指定');
@@ -93,7 +94,7 @@
     const visible=local.points.filter(p=>{
       if(!query)return true;
       const value=local.summaries.get(summaryKey(p));
-      return value&&[value.shot_id,value.branch_name,value.prompt,value.repair_note,value.director_note,value.template_name,p.created_utc].join('\n').toLocaleLowerCase().includes(query);
+      return value&&[value.story_summary?.title,value.shot_id,value.branch_name,value.prompt,value.repair_note,value.director_note,value.template_name,p.created_utc].join('\n').toLocaleLowerCase().includes(query);
     });
     $('continue-choice').replaceChildren(...visible.map(p=>{
       const value=local.summaries.get(summaryKey(p)),o=document.createElement('option');o.value=p.id;

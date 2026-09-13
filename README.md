@@ -1,8 +1,6 @@
-## R14 个人工作流
+## 当前用户入口：Manju R16 · 0.2.0+r16.8
 
-离线工作台第08区可从总备份按区域取用成果、导出个人文字模板、预览后应用并立即撤回一次，或另存命名副本。新包仍使用Studio/v1，不强制迁移R13备份。
-
-使用入口见 [中文说明](tools/delivery/QUICKSTART_ZH.md)，灵活性梳理见 [R14报告](REPORTS/continuation/R14_PROJECT_REVIEW.md)。质量优先规则保持，模板不是模型执行器或批准。
+先读 [中文使用说明](tools/delivery/QUICKSTART_ZH.md)。本轮故事工作本与版本复核接入原镜头工作区，改动范围与边界见 [本轮报告](REPORTS/story/PROJECT_REVIEW.md)。有故事时请保存收工包，旧内层Studio/v1不包含故事。模型质量偏好和全部已有工作区保留。
 
 # Manju One
 

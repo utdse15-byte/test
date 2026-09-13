@@ -30,6 +30,43 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  - id: manju.story-notebook/v1
+    kind: schema
+    owner: manju.authoring.story:Story
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Optional ordered story working copy and explicitly scoped sources. Not a canonical series Bible replacement.
+
+  - id: manju.story-brief/v1
+    kind: schema
+    owner: manju.authoring.story:Compiled
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Version-bound selected context. Hash equality does not certify semantic correctness or production approval.
+
+  - id: manju.story-brief-manifest/v1
+    kind: schema
+    owner: manju.authoring.story:verify_brief_kit
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Closed-set content-addressed raw references plus frozen brief. Not an execution or provenance signature.
+
+  - id: manju.desk-session/v2
+    kind: schema
+    owner: manju.authoring.desk:StoryDesk
+    status: experimental
+    latest_version: 2
+    read_older: true
+    write_older: false
+    notes: Desk with optional story notebook; reads old v1 and keeps unchanged extractable inner Studio v1. Never silently drops a story to downgrade.
+
+
   - id: manju.retouch-task/v1
     kind: schema
     owner: manju.authoring.retouch:create_task
