@@ -1,0 +1,9 @@
+<dialog id="ux-image-dialog" aria-labelledby="ux-image-title" aria-describedby="ux-image-help">
+ <div class="ux-image-head"><div><h2 id="ux-image-title">查看原图</h2><p id="ux-image-meta" role="status">正在读取图像…</p></div><button id="ux-image-close" type="button" aria-label="关闭大图查看">关闭 <kbd>Esc</kbd></button></div>
+ <div class="ux-image-tools" role="group" aria-label="图像查看控制">
+  <div><button id="ux-image-prev" type="button" aria-label="上一张图">← 上一张</button><button id="ux-image-next" type="button" aria-label="下一张图">下一张 →</button></div>
+  <div><button id="ux-image-fit" type="button" aria-pressed="true">适合窗口</button><button id="ux-image-actual" type="button" aria-pressed="false">100% 原尺寸</button><button id="ux-image-minus" type="button" aria-label="缩小图像">−</button><output id="ux-image-zoom" aria-label="缩放比例">100%</output><button id="ux-image-plus" type="button" aria-label="放大图像">＋</button></div>
+ </div>
+ <div id="ux-image-stage" tabindex="0" aria-label="图像区域；放大后可拖动画面或滚动查看"><div id="ux-image-surface"><img id="ux-image-original" alt="" draggable="false"></div></div>
+ <p id="ux-image-help">← → 切换原帧 / 目标图；放大后拖动或滚动查看。100% 表示一图像像素对应一 CSS 像素；仅改变显示，不裁切、不导出、不批准，也不替代色彩或 HDR 检查。</p>
+</dialog>

@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.6",
+  "version": "0.2.0+r16.7",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -126,7 +126,7 @@
   "formal_windows_release": false,
   "commercial_api_executed": false,
   "prior_verified_stage": "R16",
-  "prior_archive_sha256": "5a53f6bd6d29206266690422265d4018ff60297579c6cdd82f601b745e2048bc",
-  "maintenance_revision": "focused-creative-experience",
-  "prior_verified_version": "0.2.0+r16.5"
+  "prior_archive_sha256": "5588bad3661d98ccb949b499273aca652d480435dcbc3eb15024315aa76ac185",
+  "maintenance_revision": "original-image-inspection-and-actionable-ux",
+  "prior_verified_version": "0.2.0+r16.6"
 }

@@ -152,13 +152,16 @@ def test_edits_invalidate_and_draft_recovers_without_approval(page):
 
 
 def test_prompt_xss_is_data_not_script(page,tmp_path):
+    # The read-only image viewer now has a static, empty image node. Importing
+    # markup as prompt text must neither create images nor alter any existing src.
+    before_images=page.locator('img').evaluate_all("xs=>xs.map(e=>[e.id,e.getAttribute('src')])")
     r=Request(shot_id='x',task='create',prompt='<img src=x onerror="window.injected=true">')
     path=tmp_path/'x.json';path.write_text(json.dumps(r.model_dump(mode='json')), encoding='utf-8')
     page.locator('#import-request').set_input_files(path)
     page.wait_for_function('()=>(document.getElementById("prompt").value.includes("onerror"))')
     page.locator('#check-plan').click()
     assert not page.evaluate('Boolean(window.injected)')
-    assert page.locator('img').count()==0
+    assert page.locator('img').evaluate_all("xs=>xs.map(e=>[e.id,e.getAttribute('src')])")==before_images
 
 
 def test_mobile_no_horizontal_overflow(page):

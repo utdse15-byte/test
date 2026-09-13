@@ -14,7 +14,7 @@
   exchange: {title:'外部协作',heading:'带走材料，带回好修改。',note:'文字与原素材一起导出。返回时逐字段核对，不让外部旧稿覆盖本地新内容。',en:'WORK WITH YOUR TOOLS',target:'exchange-section'},
   flex: {title:'组合与模板',heading:'把做对的部分留下来。',note:'取用另一方案的工作区，或套用自己的文字模板。未选部分保持不变。',en:'REUSE & EXPLORE',target:'flex-section'}
  };
- let current='home',all=false,notificationTimer=null,saveTimer=null,lastNotice='';
+ let current='home',all=false,notificationTimer=null,saveSyncQueued=false,lastNotice='';
  const scrollPositions=new Map();
  const nodes=new Map();
  function register(node,view){if(node){node.dataset.uxView=view;nodes.set(node,view);}}
@@ -42,10 +42,10 @@
  const header=$('ux-topbar');
  const notice=document.createElement('div');notice.id='ux-notification';notice.hidden=true;
  const noticeText=document.createElement('p'),noticeClose=document.createElement('button');noticeClose.type='button';noticeClose.textContent='关闭';noticeClose.setAttribute('aria-label','关闭操作提示');notice.append(noticeText,noticeClose);document.body.append(notice);
- noticeClose.addEventListener('click',()=>{notice.hidden=true;clearTimeout(notificationTimer);});
+ noticeClose.addEventListener('click',()=>{notice.hidden=true;lastNotice='';clearTimeout(notificationTimer);});
  function notify(text,error=false){
   if(!text||text===lastNotice)return;lastNotice=text;noticeText.textContent=text;notice.classList.toggle('error',error);notice.hidden=false;clearTimeout(notificationTimer);
-  if(!error)notificationTimer=setTimeout(()=>{notice.hidden=true;},6500);
+  if(!error)notificationTimer=setTimeout(()=>{notice.hidden=true;lastNotice='';},6500);
  }
  function revealDetails(target){for(let p=target;p&&p!==main;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;}
  function viewFor(target){if(!target)return null;if(target.id==='workspace-section')return 'shot';for(let p=target;p&&p!==main;p=p.parentElement)if(p.dataset.uxView)return p.dataset.uxView;return null;}
@@ -56,6 +56,7 @@
    if(link.dataset.view===current&&!all)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
   }
   $('ux-show-all').setAttribute('aria-pressed',String(all));$('ux-show-all').textContent=all?'返回分区视图':'完整长页视图';
+  const activeLink=document.querySelector('#ux-navigation [aria-current="page"]'),nav=$('ux-navigation');if(activeLink&&nav.scrollWidth>nav.clientWidth){const linkBox=activeLink.getBoundingClientRect(),navBox=nav.getBoundingClientRect();if(linkBox.left<navBox.left)nav.scrollLeft-=navBox.left-linkBox.left;else if(linkBox.right>navBox.right)nav.scrollLeft+=linkBox.right-navBox.right;}
   const info=views[current];$('ux-current').textContent=all?'完整长页':info.title;$('ux-heading').textContent=all?'所有工具，完整展开。':info.heading;
   $('ux-eyebrow').textContent=all?'COMPLETE WORKBENCH':info.en;$('ux-description').textContent=all?'这是原有的完整工作方式。需要专注时，切回分区视图；文字与素材保持不变。':info.note;
   // Avoid invisible video/audio continuing to play when switching tasks. Never seek or autoplay.
@@ -93,11 +94,11 @@
   strip.dataset.state=verified?'verified':changed?'dirty':'unverified';
   $('ux-save-summary').textContent=busy?'正在整理原素材，请等待；新输入不会冒充已保存。':verified?'当前收工包已核验；继续编辑会提示重新保存。':changed?'有未核验备份的修改 · 收工时请保存并选回核验。':'尚未核验收工包 · 文件仅在本地读取，不自动云备份。';
  }
- function scheduleSync(){clearTimeout(saveTimer);saveTimer=setTimeout(syncSave,80);}
+ function scheduleSync(){if(saveSyncQueued)return;saveSyncQueued=true;queueMicrotask(()=>{saveSyncQueued=false;syncSave();});}
  for(const type of ['input','change','click'])document.addEventListener(type,scheduleSync);
  const observer=new MutationObserver(records=>{
   if(records.some(r=>r.target===status||status?.contains(r.target)))notify(status.textContent,status.classList.contains('error'));
-  if(records.some(r=>r.target===$('desk-save-status')||$('desk-save-status').contains(r.target))){notify($('desk-save-status').textContent,$('desk-save-status').classList.contains('reason'));scheduleSync();}
+  if(records.some(r=>r.target===$('desk-save-status')||$('desk-save-status').contains(r.target))){if($('desk-save-status').dataset.noticeKind!=='dirty')notify($('desk-save-status').textContent,$('desk-save-status').classList.contains('reason'));scheduleSync();}
  });
  if(status)observer.observe(status,{childList:true,subtree:true,characterData:true});observer.observe($('desk-save-status'),{childList:true,subtree:true,characterData:true});
  // Unified intake can finish asynchronously. Surface its preview instead of hiding it.
@@ -108,6 +109,7 @@
  function connectContinuation(){const panel=$('continue-panel');if(panel&&!nodes.has(panel)){register(panel,'home');$('studio-home').after(panel);present({scroll:false});}}
  new MutationObserver(connectContinuation).observe(main,{childList:true});connectContinuation();
  const commands=[
+  {name:'原尺寸查看关键帧与目标图',description:'进入导演区，点击缩略图打开大图。只查看，不修改或批准。',target:'director-anchors',words:'大图 放大 100% 看图 对比 精修 原图'},
   ...Object.entries(views).map(([key,v])=>({name:v.title,description:v.note,target:v.target,words:key})),
   {name:'找回改名 / 搬家的素材',description:'按内容核对原文件，不按同名替换。',target:'relink-panel',words:'缺失 重新绑定 hash 原片'},
   {name:'带出关键帧精修',description:'原图与逐图要求一起导出，返回后预览接回。',target:'retouch-section',words:'图片 修图 png 图像'},
@@ -126,7 +128,7 @@
   results.replaceChildren();$('ux-search-count').textContent=found.length?`${found.length} 个入口 · 只导航，不执行创作操作`:'没有匹配的入口。可试试“保存”“精修”“找回”。';
   for(const c of found){const button=document.createElement('button');button.type='button';const label=document.createElement('span');label.textContent=c.name;const small=document.createElement('small');small.textContent=c.description;label.append(small);const arrow=document.createElement('span');arrow.textContent='↗';arrow.setAttribute('aria-hidden','true');button.append(label,arrow);button.addEventListener('click',()=>runCommand(c));results.append(button);}
  }
- function openSearch(){if(dialog.open)return;previousFocus=document.activeElement;search.value='';renderSearch();dialog.showModal();search.focus();}
+ function openSearch(){if(document.querySelector('dialog[open]'))return;previousFocus=document.activeElement;search.value='';renderSearch();dialog.showModal();search.focus();}
  $('ux-search-open').addEventListener('click',openSearch);$('ux-search-close').addEventListener('click',()=>dialog.close());
  dialog.addEventListener('close',()=>{if(document.activeElement===document.body||dialog.contains(document.activeElement))previousFocus?.focus({preventScroll:true});});
  search.addEventListener('input',renderSearch);
@@ -139,7 +141,7 @@
  document.addEventListener('keydown',event=>{
   if(event.isComposing||event.keyCode===229||event.altKey)return;
   if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&event.key.toLowerCase()==='k'){event.preventDefault();openSearch();}
-  if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&event.key.toLowerCase()==='s'&&!dialog.open){event.preventDefault();save();}
+  if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&event.key.toLowerCase()==='s'){event.preventDefault();if(!document.querySelector('dialog[open]'))save();}
  });
  const currentHash=()=>{let id;try{id=decodeURIComponent(location.hash.slice(1));}catch{return;}if(id&&$(id))reveal(id);};
  window.addEventListener('hashchange',currentHash);

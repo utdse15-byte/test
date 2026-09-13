@@ -7,7 +7,7 @@ function deskBuffers(){return {external_edit:clone(exchangeState.edit),personal_
 function deskFingerprint(){return canonical({view:studioView(),buffers:deskBuffers()});}
 function deskGuard(){return canonical({studio:studioGuard(),buffers:deskBuffers()});}
 const deskInitialBuffers=canonical(deskBuffers());
-function deskNotice(text,error=false){$('desk-save-status').textContent=text;$('desk-save-status').classList.toggle('reason',error);}
+function deskNotice(text,error=false,kind='operation'){$('desk-save-status').dataset.noticeKind=kind;$('desk-save-status').textContent=text;$('desk-save-status').classList.toggle('reason',error);}
 function intakeNotice(text,error=false){$('intake-status').textContent=text;$('intake-status').classList.toggle('reason',error);}
 function deskNeedsSave(){return deskState.verified?deskFingerprint()!==deskState.verified:studioNeedsBackup()||canonical(deskBuffers())!==deskInitialBuffers;}
 async function scanBlob(blob){
@@ -67,7 +67,7 @@ async function deskPreview(blob,{source="file"}={}){
 function deskChanged(){
  if(deskState.pending&&deskState.pending.guard!==deskGuard()){deskState.pending=null;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;$('desk-restore-summary').textContent='预览后工作或待处理材料已变化，旧预览失效。请重新打开收工包；新内容没有被覆盖。';}
  if(deskState.intake&&deskState.intake.guard!==deskGuard()){deskState.intake=null;$('intake-open').disabled=true;$('intake-confirmed').checked=false;intakeNotice('识别后工作已变化，请重新选择文件；未导入或覆盖新内容。');}
- if(deskState.verified&&deskNeedsSave())deskNotice('有未核验的新修改或待处理材料。此前收工包仍在，请重新保存并选回文件核验。');
+ if(deskState.verified&&deskNeedsSave())deskNotice('有未核验的新修改或待处理材料。此前收工包仍在，请重新保存并选回文件核验。',false,'dirty');
  $('desk-inventory').textContent=`当前：原素材 ${studioBindings().size} 个；待处理外部改稿 ${exchangeState.edit?'1 份':'无'}；已加载模板 ${flexState.template?'1 份':'无'}。`;
  $('desk-restore-apply').disabled=!deskState.pending||!$('desk-restore-confirmed').checked;
  const choice=deskState.intake?.routes[Number($('intake-destination').value)];$('intake-replace-note').hidden=!choice?.replace;$('intake-open').disabled=!choice||(choice.replace&&!$('intake-confirmed').checked);
