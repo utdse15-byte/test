@@ -125,6 +125,7 @@ async function identifyIntake(files){
  require(file.size<=2*1024*1024,'未知文件不作为 JSON 读取；JSON 最大 2 MiB');
  const doc=strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()));require(doc&&typeof doc==='object'&&!Array.isArray(doc),'材料必须是带版本标记的对象');
  const routes={
+  'manju.retouch-task/v1':['retouch','静帧精修任务；选回原 TASK.json 后核验，再选择实际返回 PNG。不是完整备份。',intakeRoute('载入静帧精修任务','retouch-task','retouch-section')],
   'manju.model-request/v1':['request','镜头任务，不含媒体。导入会替换上方任务，原工程不变。',intakeRoute('导入镜头任务','import-request','workspace-section',true)],
   'manju.project-authoring-import/v1':['request','主影片只读导出的镜头与上下文。此页修改不会自动写回原工程。',intakeRoute('导入工程镜头','import-request','workspace-section',true)],
   'manju.model-catalog/v1':['catalog','型号能力目录。先展示差异，确认后才替换。',intakeRoute('预览能力档变化','import-catalog','catalog-preview')],

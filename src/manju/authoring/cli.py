@@ -354,3 +354,11 @@ def external_apply_command(archive: Path, edit: Path,
     if not confirm:
         raise AuthoringError('preview first, then explicitly pass --confirm with selected fields')
     _emit(apply_archive(archive, read_edit(edit), take, output, expected_preview=preview_sha256))
+
+
+@app.command('retouch-verify')
+@_guard
+def retouch_verify_command(archive: Path):
+    """只读核验静帧精修交接包；不是生成服务、完整备份或画质认证。"""
+    from .retouch import verify_kit
+    _emit(verify_kit(archive))

@@ -30,6 +30,15 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  - id: manju.retouch-task/v1
+    kind: schema
+    owner: manju.authoring.retouch:create_task
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Offline image-edit jobs bound to original director intent. Partial returns retain per-anchor baselines. No execution, approval or complete video backup.
+
   - id: manju.desk-session/v1
     kind: schema
     owner: manju.authoring.desk:Desk

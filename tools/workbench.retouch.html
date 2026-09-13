@@ -1,0 +1,14 @@
+<details id="retouch-section" class="option" style="margin-top:16px">
+<summary><strong>把关键帧带去顶尖图像工具精修，再批量接回</strong></summary>
+<p>按每个时刻自动整理原帧、已有目标图和独立提示词。只带图片，不带原视频；没有上传、生成或付款动作。</p>
+<label class="field" for="retouch-route">外部精修入口（任务说明，不是 API 连接）<select id="retouch-route"><option value="">请明确选择</option></select></label>
+<p class="hint">2026-09-12 核验：Sunburst 按官方精细编辑定位提供 max 质量任务说明，不冒称独立榜首。平台不支持所需规格时停止，不自动降档。<a href="https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst" target="_blank" rel="noopener noreferrer">官方资料</a></p>
+<div class="actions"><button id="retouch-export">导出精修任务 ZIP（不含视频）</button></div>
+<p class="hint">解压 ZIP，按 PROMPTS 中的文字逐张精修。返回 PNG 请使用任务指定的名字。TASK.json 不能修改。需要跨会话继续时，先保存收工包，再保留这份精修 ZIP。</p>
+<div class="actions"><label class="filebtn" for="retouch-task">1 · 选回 TASK.json<input class="hidden" id="retouch-task" type="file" accept=".json,application/json"></label><label class="filebtn" for="retouch-outputs">2 · 选择已完成的 PNG（可分批）<input class="hidden" id="retouch-outputs" type="file" accept=".png,image/png" multiple></label><button id="retouch-preview">3 · 核验并预览</button></div>
+<div id="retouch-return-preview" hidden></div>
+<label class="check"><input id="retouch-confirm" type="checkbox">我已查看这批图片，只把它们绑定为待审目标图；不批准生成或选片</label>
+<div class="actions"><button id="retouch-apply" disabled>确认接回预览中的目标图</button></div>
+<p class="hint">只接受同画幅 PNG，保留实际像素与原文件字节。改过镜头、底片或对应目标要求时拒绝套用旧任务；无关锚点可以继续编辑。选图与预览尚不属于收工包，应用后请另存收工包。TASK.json 和原片不会被改写。</p>
+<p id="retouch-status" class="hint" role="status" aria-live="polite">未载入精修任务。</p>
+</details>

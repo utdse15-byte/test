@@ -1,0 +1,29 @@
+{
+  "schema_id": "manju.image-route-evidence/v1",
+  "checked_on": "2026-09-12",
+  "review_after": "2026-09-19",
+  "routes": [
+    {
+      "id": "manual-top-quality",
+      "label": "自行选择顶尖精修工具（不限定平台）",
+      "model_id": null,
+      "quality": "highest_available_no_automatic_downgrade",
+      "basis": "user_preference_not_a_ranking",
+      "source": null
+    },
+    {
+      "id": "openai-sunburst-20260908",
+      "label": "GPT-Image-2.5 Sunburst · 外部 API 任务说明",
+      "model_id": "gpt-image-2.5-sunburst-2026-09-08",
+      "quality": "max",
+      "basis": "official_precision_positioning_not_independent_blind_test",
+      "source": "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst"
+    }
+  ],
+  "limits": [
+    "仅生成交接材料，不调用商业 API、不上传、不付费、不替用户批准结果。",
+    "Sunburst 是官方面向精细创作的型号定位，不冒称已独立证明所有场景最佳。",
+    "外部入口的质量档、权限、输入数量和尺寸上限需提交前核验；不支持时停止，不自动降档。",
+    "ChatGPT 网页与 OpenAI API、Runway 同名入口不能混为一个端点。"
+  ]
+}

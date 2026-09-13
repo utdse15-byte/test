@@ -9,6 +9,7 @@
 <div class="formrow"><label class="field" for="director-preserve">从原片保留什么<textarea id="director-preserve" rows="3" maxlength="30000" placeholder="每行一项，例如：手部动作与镜头运动"></textarea></label><label class="field" for="director-change">允许替换什么<textarea id="director-change" rows="3" maxlength="30000" placeholder="每行一项，例如：角色外观与背景"></textarea></label></div>
 <div id="director-anchors"><div class="empty">尚未提取原帧。目标图建议先在你选择的顶尖图像工具中制作，再以同画幅 PNG 绑定回来。</div></div>
 <p class="hint">每张目标图应表达“这个时刻应是什么样”，而不是描述从旧画面变成新画面的剧情。不自动放大、不静默裁切；目标 PNG 必须与对应原帧画幅相同；可以使用更高像素的原生目标图，实际字节不被缩回原片尺寸。不完整的目标文字和未绑定的目标图也能保存，但不会标记为已批准。</p>
+<!-- RETOUCH_SECTION -->
 <div class="actions"><button id="director-export" class="primary">保存导演材料 ZIP（含原片和所有图）</button><label class="filebtn" for="director-import">核验并重新打开导演 ZIP<input class="hidden" id="director-import" type="file" accept=".zip,application/zip"></label></div>
 <p class="hint">导演区单独保存，不包含在上方“镜头任务与审片现场”或返工 ZIP 中。关闭前分别保存需要的区域，并到下载列表确认。重新打开只替换导演区，不覆盖上方任务或工程。</p>
 <p id="director-status" role="status" aria-live="polite" class="hint">未上传任何素材。</p>

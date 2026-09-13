@@ -21,10 +21,11 @@ def sha(path):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--release',type=Path,required=True);p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--prefix',default='MANJU_RECOVER')
     a=p.parse_args();a.output.mkdir(parents=True,exist_ok=False)
-    full=a.release/'MANJU_RECOVER_FULL.zip';start=a.release/'MANJU_RECOVER_START.zip'
-    helper=a.release/'MANJU_RECOVER_DOWNLOAD_HELPER.html'
-    parts=sorted(a.release.glob('MANJU_RECOVER_PART_*.zip'));assert len(parts)==5
+    full=a.release/(a.prefix+'_FULL.zip');start=a.release/(a.prefix+'_START.zip')
+    helper=a.release/(a.prefix+'_DOWNLOAD_HELPER.html')
+    parts=sorted(a.release.glob(a.prefix+'_PART_*.zip'));assert len(parts)==5
     renamed=a.output/'我的上手包.zip';shutil.copyfile(start,renamed)
     truncated=a.output/'incomplete.zip';truncated.write_bytes(start.read_bytes()[:-17])
     errors=[]

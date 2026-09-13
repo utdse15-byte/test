@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.4",
+  "version": "0.2.0+r16.5",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -116,7 +116,8 @@
       "跨工作区按内容与大小找回原文件：改名保真、显式预览、元数据复核、接回前重读、过期预览拒绝",
       "续作请求的响应正文受完整超时约束，卡住或迟到回执不标记保存成功",
       "恢复点只读内容摘要与筛选，精确字节绑定、坏点不删除、不恢复或授权",
-      "本窗口保留恢复点按保存序列而非系统时钟，倒拨时间不误删较新点"
+      "本窗口保留恢复点按保存序列而非系统时钟，倒拨时间不误删较新点",
+      "逐关键帧精修任务、原图与逐张提示词导出，明确顶尖图像入口，分批返回时核对共用与单锚点基线、保留高像素PNG"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
@@ -124,7 +125,7 @@
   "formal_windows_release": false,
   "commercial_api_executed": false,
   "prior_verified_stage": "R16",
-  "prior_archive_sha256": "e79ef20b4483e7e6f8fea9c9499a3e6fcab743faade2397d626e1c7a0d9e8524",
-  "maintenance_revision": "read-only-recovery-index-20260912",
-  "prior_verified_version": "0.2.0+r16.3"
+  "prior_archive_sha256": "fddf7e0f508da75b4c176c655bbbb848238d08896373419ad1ca4b0559cc0e6d",
+  "maintenance_revision": "frontier-image-retouch-20260912",
+  "prior_verified_version": "0.2.0+r16.4"
 }

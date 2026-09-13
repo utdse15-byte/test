@@ -6,7 +6,7 @@ const RASTER_KEYS=['sha256','bytes','width','height','filename'];
 const MAX_RASTER=32*1024*1024,MAX_DIRECTOR_PIXELS=33554432;
 const directorState={source:null,entry:null,anchors:[],files:new Map(),busy:false,revision:0,dirty:false,url:null,previews:[]};
 function directorNotice(text,error=false){$('director-status').textContent=text;$('director-status').classList.toggle('reason',error);}
-function directorChanged(){directorState.revision++;directorState.dirty=true;}
+function directorChanged(){directorState.revision++;directorState.dirty=true;window.ManjuRetouch?.changed();}
 function directorRaster(value){
  exactKeys(value,RASTER_KEYS,'锚点 PNG');require(hashPattern.test(value.sha256),'PNG 哈希无效');integer(value.bytes,1,MAX_RASTER,'PNG 字节');integer(value.width,1,8192,'PNG 宽');integer(value.height,1,8192,'PNG 高');require(value.width*value.height<=MAX_DIRECTOR_PIXELS,'PNG 超过本地像素上限，不自动缩小');
  require(typeof value.filename==='string'&&value.filename.length<=240,'PNG 文件名无效');safePath(value.filename);require(!value.filename.includes('/')&&extension(value.filename)==='.png','只允许平面文件名的 PNG');return clone(value);

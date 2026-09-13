@@ -487,6 +487,12 @@
       "archive"
     ]
   },
+  "models retouch-verify": {
+    "exists": true,
+    "params": [
+      "archive"
+    ]
+  },
   "models studio-compose": {
     "exists": true,
     "params": [
