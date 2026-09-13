@@ -64,6 +64,9 @@ def page(browser):
         page.set_content(PAGE.read_text(encoding='utf-8'),wait_until='load')
     else:
         page.goto(PAGE.as_uri(),wait_until='load',timeout=15000)
+    # Legacy protocol/media regressions use the explicit, user-accessible complete
+    # view. New experience tests exercise the default focused view separately.
+    page.evaluate("window.ManjuExperience?.showAll({scroll:false})")
     yield page
     context.close()
 

@@ -136,9 +136,9 @@ def test_generated_page_tracks_delivery_identity_and_external_scope():
     import json
     from pathlib import Path
     root=Path(__file__).resolve().parents[1]
-    stage=json.loads((root/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))['stage']
+    version=json.loads((root/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))['version']
     html=(root/'tools/model_workbench.html').read_text(encoding='utf-8')
-    assert f'<span class="release">{stage} ·' in html
+    assert f'<span class="release">{version} ·' in html
     assert '本地占位预演' in html
     assert html==(root/'src/manju/authoring/data/workbench.html').read_text(encoding='utf-8')
 

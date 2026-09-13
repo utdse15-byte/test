@@ -16,28 +16,8 @@ from manju.review.cli import app
 import importlib.util
 import os
 
-@pytest.fixture(scope='module')
-def browser():
-    if not importlib.util.find_spec('playwright') or not shutil.which('chromium'):
-        pytest.skip('real Chromium/Playwright unavailable')
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        b=p.chromium.launch(executable_path=shutil.which('chromium'),headless=True,args=['--no-sandbox'],timeout=15000)
-        yield b
-        b.close()
-
-@pytest.fixture
-def page(browser):
-    context=browser.new_context(accept_downloads=True,viewport={'width':1280,'height':960})
-    page=context.new_page()
-    html=Path(__file__).resolve().parents[1]/'tools/model_workbench.html'
-    if os.environ.get('MANJU_BROWSER_TEST_TRANSPORT')=='isolated_document':
-        page.set_content(html.read_text(encoding='utf-8'),wait_until='load')
-    else:
-        page.goto(html.as_uri(),wait_until='load',timeout=15000)
-    yield page
-    context.close()
-
+# One explicit complete-page fixture for all legacy media/protocol checks.
+from tests.test_rebuilt_r5_workbench import browser, page
 
 NOW=datetime(2026,9,6,12,tzinfo=timezone.utc)
 

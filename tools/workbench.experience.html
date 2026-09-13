@@ -1,0 +1,27 @@
+<a class="ux-skip" href="#ux-content">跳到当前工作区</a>
+<aside id="ux-sidebar" aria-label="Manju 工作区导航">
+ <a class="ux-brand" href="#studio-home" aria-label="Manju 创作间，返回首页"><span class="ux-monogram" aria-hidden="true">m<span>·</span></span><span>MANJU<small>你的本地创作间</small></span></a>
+ <div class="ux-nav-caption">工作区</div>
+ <nav id="ux-navigation" aria-label="切换工作区">
+  <a href="#studio-home" data-view="home"><span class="ux-nav-icon" aria-hidden="true">◫</span><span>开始与保存<small>继续工作 · 收工带走</small></span></a>
+  <a href="#ux-shot" data-view="shot"><span class="ux-nav-icon" aria-hidden="true">▤</span><span>镜头与素材<small>表达想法 · 确认交接</small></span></a>
+  <a href="#review-section" data-view="review"><span class="ux-nav-icon" aria-hidden="true">▷</span><span>审片与定稿<small>看候选 · 记录决定</small></span></a>
+  <a href="#director-section" data-view="director"><span class="ux-nav-icon" aria-hidden="true">▧</span><span>导演与精修<small>定运动 · 定画面</small></span></a>
+  <a href="#repair-section" data-view="repair"><span class="ux-nav-icon" aria-hidden="true">⌁</span><span>局部返工<small>明确要改的范围</small></span></a>
+  <a href="#exchange-section" data-view="exchange"><span class="ux-nav-icon" aria-hidden="true">⇄</span><span>外部协作<small>带出去 · 带回来</small></span></a>
+  <a href="#flex-section" data-view="flex"><span class="ux-nav-icon" aria-hidden="true">⊞</span><span>组合与模板<small>复用做对的部分</small></span></a>
+ </nav>
+ <div class="ux-sidebar-bottom"><button id="ux-show-all" type="button" aria-pressed="false">完整长页视图</button><p>文件留在本地<br>不自动生成、选片或付款</p><span class="ux-build">__RELEASE__</span></div>
+</aside>
+<header id="ux-topbar">
+ <div class="ux-breadcrumb"><span>创作间</span><span aria-hidden="true">/</span><strong id="ux-current">开始与保存</strong></div>
+ <div class="ux-top-actions"><button id="ux-search-open" type="button" aria-haspopup="dialog" aria-controls="ux-search-dialog"><span aria-hidden="true">⌕</span><span>快速找到</span><kbd>Ctrl K</kbd></button><button id="ux-text-size" type="button" aria-pressed="false" title="只改变阅读字号，不改变素材尺寸">大字阅读</button><button id="ux-open" type="button">打开材料</button><button id="ux-save" class="primary" type="button" title="保存收工包 ZIP，Ctrl / ⌘ + S">保存收工包<span aria-hidden="true"> ↗</span></button></div>
+</header>
+<div id="ux-content" tabindex="-1"></div>
+<dialog id="ux-search-dialog" aria-labelledby="ux-search-title">
+ <div class="ux-dialog-head"><h2 id="ux-search-title">你想做什么？</h2><button id="ux-search-close" type="button" aria-label="关闭快速查找">关闭 <kbd>Esc</kbd></button></div>
+ <label class="ux-search-label" for="ux-search-input">查找功能或工作区</label><input id="ux-search-input" type="search" placeholder="例如：精修、找回素材、保存、模板…" autocomplete="off" maxlength="120">
+ <p id="ux-search-count" class="hint" role="status"></p><div id="ux-search-results" aria-label="匹配入口"></div>
+ <p class="ux-search-foot">只带你去对应入口，不会执行生成、恢复或删除。<span>↑ ↓ 选择　Enter 前往</span></p>
+</dialog>
+<div id="ux-save-strip"><span id="ux-save-indicator" aria-hidden="true"></span><span id="ux-save-summary">工作仅在当前页面，请保存收工包。</span><button id="ux-save-detail" type="button">查看 / 核验</button></div>

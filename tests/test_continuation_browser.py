@@ -46,13 +46,16 @@ class Live:
         conn.request(request['method'],request['path'],body=body,headers=headers)
         r=conn.getresponse();answer={'status':r.status,'headers':dict(r.getheaders()),'body':base64.b64encode(r.read()).decode()}
         conn.close();return answer
-    def page(self,browser,*,width=1100):
+    def page(self,browser,*,width=1100,focused=False):
         ctx=browser.new_context(accept_downloads=True,viewport={'width':width,'height':900})
         p=ctx.new_page();p.expose_function('__local_http_test',self.call)
         conn=http.client.HTTPConnection('127.0.0.1',self.server.server_port,timeout=10)
         conn.request('GET',self.parsed.path);r=conn.getresponse();assert r.status==200;html=r.read().decode();conn.close()
         html=html.replace('<head>','<head>'+BRIDGE,1)
         p.set_content(html,wait_until='load');p.wait_for_function('!!window.ManjuContinuation')
+        # Retain the visible, supported complete-page view for legacy service tests.
+        # New focused-view service tests request focused=True explicitly.
+        if not focused:p.evaluate('window.ManjuExperience?.showAll({scroll:false})')
         return ctx,p
 
 

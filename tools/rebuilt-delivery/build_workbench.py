@@ -3,7 +3,7 @@ from pathlib import Path
 import json
 import sys
 root=Path(__file__).resolve().parents[2]
-release=sys.argv[1] if len(sys.argv)>1 else json.loads((root/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))['stage']
+release=sys.argv[1] if len(sys.argv)>1 else json.loads((root/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))['version']
 template=(root/'tools/workbench.template.html').read_text(encoding='utf-8')
 catalog=(root/'src/manju/authoring/data/catalog.json').read_text(encoding='utf-8')
 script=(root/'tools/workbench.js').read_text(encoding='utf-8')
@@ -43,6 +43,10 @@ template=template.replace('<!-- DESK_SECTION -->',(root/'tools/workbench.desk.ht
 script=script.replace('// DESK_SCRIPT',(root/'tools/workbench.desk.js').read_text(encoding='utf-8'))
 template=template.replace('<!-- RELINK_SECTION -->',(root/'tools/workbench.relink.html').read_text(encoding='utf-8'))
 script=script.replace('// RELINK_SCRIPT',(root/'tools/workbench.relink.js').read_text(encoding='utf-8'))
+template=template.replace('<!-- EXPERIENCE_SHELL -->',(root/'tools/workbench.experience.html').read_text(encoding='utf-8'))
+template=template.replace('/* EXPERIENCE_STYLE */',(root/'tools/workbench.experience.css').read_text(encoding='utf-8'))
+experience=(root/'tools/workbench.experience.js').read_text(encoding='utf-8')
+template=template.replace('__EXPERIENCE_SCRIPT__',experience.replace('</script','<\\/script'))
 # Do not allow JSON strings or program string literals to close a script tag.
 html=template.replace('__CATALOG__',catalog.replace('</','<\\/')).replace('__SCRIPT__',script.replace('</script','<\\/script')).replace('__RELEASE__',release).replace('__QUALITY__',quality.replace('</','<\\/'))
 for path in [root/'tools/model_workbench.html',root/'src/manju/authoring/data/workbench.html']:

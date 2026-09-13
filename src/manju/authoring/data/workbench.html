@@ -8,12 +8,54 @@
 :root{color-scheme:light;--ink:#152b38;--muted:#536772;--line:#cddbdc;--paper:#f3f7f5;--white:#fff;--accent:#006d68;--soft:#e1f0ec;--warn:#79460a;--red:#a32632;--shadow:0 8px 28px #193e4410}
 *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}header{background:#112d38;color:#fff;padding:26px max(24px,calc((100vw - 1240px)/2));border-bottom:5px solid #37bdab}header .top{display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{letter-spacing:.18em;font-size:13px;font-weight:750;color:#9edcd1}h1{font-size:clamp(25px,3vw,37px);line-height:1.3;margin:10px 0 8px}header p{color:#c7dbdf;margin:0;max-width:75ch}.pill{display:inline-block;border:1px solid #47717d;border-radius:30px;padding:5px 14px;font-size:13px;white-space:nowrap}main{max-width:1288px;margin:auto;padding:24px}.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 22px}.toolbar .grow{flex:1}button,.filebtn{font:inherit;cursor:pointer;border-radius:8px;padding:9px 15px;border:1px solid var(--line);background:var(--white);color:var(--ink);font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px;text-align:center;min-height:44px}button:hover,.filebtn:hover{border-color:var(--accent)}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,a:focus-visible{outline:3px solid #29a697;outline-offset:2px}button:disabled{opacity:.47;cursor:not-allowed}.primary{background:var(--accent);color:white;border-color:var(--accent)}.quiet{background:transparent;color:var(--muted)}.danger{color:var(--red)}input[type=file].hidden{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:22px;align-items:start}.panel{background:var(--white);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:24px;margin-bottom:20px;min-width:0}.panel h2{font-size:20px;margin:0 0 14px;display:flex;align-items:center;gap:10px}.num{background:var(--soft);color:var(--accent);border-radius:8px;padding:1px 9px;font-size:15px}.hint{font-size:13px;color:var(--muted);margin:6px 0 12px}.formrow{display:grid;grid-template-columns:1fr 1fr;gap:14px}.triple{grid-template-columns:repeat(3,1fr)}label.field{display:block;font-size:14px;font-weight:650;margin:0 0 13px}input,select,textarea{display:block;width:100%;border:1px solid var(--line);border-radius:7px;padding:10px 11px;color:var(--ink);background:#fcfefd;font:inherit;font-size:15px;margin-top:5px}textarea{resize:vertical;min-height:90px}input[type=checkbox],input[type=radio]{display:inline-block;width:auto;margin:0 8px 0 0;accent-color:var(--accent)}.checkline{font-size:14px;font-weight:500;display:flex;align-items:flex-start;gap:4px;margin:12px 0}.checkline input{margin-top:6px;flex:none}.status{padding:12px 16px;border-radius:9px;background:var(--soft);border:1px solid #b4d7cf;font-size:14px;margin-bottom:20px;overflow-wrap:anywhere}.status.error{color:var(--red);background:#fff1f2;border-color:#edc1c5}.small{font-size:12px}.muted{color:var(--muted)}.asset{border-top:1px solid var(--line);padding:13px 0;overflow-wrap:anywhere}.asset:first-child{border-top:0}.asset-head{display:flex;justify-content:space-between;gap:10px;align-items:start}.asset strong{display:block;font-size:14px}.asset code{font-size:11px;color:var(--muted)}.asset button{padding:4px 10px;min-height:32px;font-size:12px}.asset .formrow{margin-top:8px}.asset .field{margin-bottom:4px;font-size:12px}.asset input,.asset select{font-size:13px;padding:7px}.bound{color:var(--accent);font-size:12px}.unbound{color:var(--warn);font-size:12px}.option{min-width:0;overflow-wrap:anywhere;border:1px solid var(--line);border-radius:10px;padding:15px;margin-bottom:12px;background:#fcfefd}.option.selected{border:2px solid var(--accent);padding:14px;background:#f4fcf8}.option.blocked{background:#fbf8f8;border-color:#e1d3d5}.option-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start}.option h3{font-size:15px;margin:0 0 4px}.option label{font-weight:700;cursor:pointer}.tag{display:inline-block;font-size:11px;border:1px solid #b8cccc;border-radius:5px;padding:1px 5px;margin:0 5px 5px 0}.tag.bad{color:var(--red);border-color:#ddb7bd}.tag.good{color:var(--accent);background:var(--soft)}.reason{font-size:12px;color:var(--red);margin:6px 0;overflow-wrap:anywhere}.notice{font-size:12px;color:var(--warn);margin:6px 0;overflow-wrap:anywhere}details{margin:10px 0;font-size:13px}summary{cursor:pointer;color:var(--muted);font-weight:600}pre{background:#edf3f2;border-radius:8px;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:380px;overflow:auto;font-size:12px}.empty{border:1px dashed var(--line);padding:28px 15px;text-align:center;color:var(--muted);border-radius:10px;font-size:14px}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:15px}.warningbox{border-left:3px solid #bd821b;background:#fff8e9;padding:10px 13px;font-size:13px}.footer{padding:8px 2px 30px;color:var(--muted);font-size:12px}#source-context{max-height:230px}#plan-summary{font-size:13px;color:var(--muted);margin:0 0 13px}.brandline{display:flex;justify-content:space-between;gap:15px;flex-wrap:wrap}.release{font-variant-numeric:tabular-nums}#review-section{margin-top:20px}[hidden]{display:none!important}@media(max-width:820px){.grid{grid-template-columns:1fr}main{padding:16px}.panel{padding:18px}header{padding:22px 20px}.top{align-items:flex-start!important}.pill{font-size:11px;padding:4px 9px}}@media(max-width:460px){.formrow{grid-template-columns:1fr}.triple{grid-template-columns:1fr 1fr}.toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.toolbar .grow{display:none}.toolbar button,.toolbar .filebtn{width:100%;min-width:0;white-space:normal}.panel h2{font-size:18px}.actions button{flex:1;min-width:140px}header .top{display:block}.pill{margin-top:12px}button{font-size:14px}.option-head{display:block}.option-head .tag{margin-top:5px}}
 </style>
+<style>/* Presentation-only layer. No remote assets, font downloads, or data fields. */
+:root{--ink:#24322e;--muted:#5f7169;--line:#dce5df;--paper:#f4f6f3;--white:#fff;--accent:#18654d;--soft:#eaf3ec;--warn:#7b561b;--red:#a32c3c;--shadow:0 4px 18px #17372a05;--ux-side:222px;--ux-top:76px;--ux-reading:15px}
+html{scroll-padding-top:98px}body{font-size:var(--ux-reading);background:var(--paper);line-height:1.65}body.ux-large{--ux-reading:17px}a{color:var(--accent);text-underline-offset:3px}button,.filebtn{border-radius:9px;font-size:14px;font-weight:600;min-height:42px;padding:9px 14px;transition:background .12s,border-color .12s,box-shadow .12s}button:not(:disabled):hover,.filebtn:hover{background:#eef4ef;border-color:#aec9b8;box-shadow:0 2px 4px #12352408}button.primary:not(:disabled):hover{background:#104d3a;color:#fff}.primary{background:var(--accent);color:#fff;border-color:var(--accent)}button:disabled{opacity:.48}button:active:not(:disabled){transform:translateY(1px)}button,.filebtn,summary,a,input,select,textarea{-webkit-tap-highlight-color:transparent}button:focus-visible,.filebtn:focus-within,summary:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #648b71;outline-offset:3px}.hidden:focus-visible{outline:0}
+#ux-sidebar{position:fixed;inset:0 auto 0 0;width:var(--ux-side);background:#172e26;color:#eaf2ed;padding:25px 16px 16px;display:flex;flex-direction:column;z-index:30}#ux-sidebar a{text-decoration:none}.ux-brand{color:#fff;display:flex;align-items:center;gap:12px;margin:3px 8px 28px;font-weight:740;letter-spacing:.15em}.ux-brand small{display:block;color:#b8cfc1;letter-spacing:.03em;font-size:11px;font-weight:450;margin-top:2px}.ux-monogram{width:39px;height:39px;border:1px solid #769684;border-radius:12px;font-size:28px;line-height:36px;letter-spacing:-.18em;text-align:center;font-family:Georgia,serif}.ux-monogram span{color:#b4d8aa}.ux-nav-caption{font-size:11px;color:#aac3b4;padding:0 13px;margin-bottom:9px;letter-spacing:.12em}#ux-navigation{display:grid;gap:5px}#ux-navigation a{display:flex;align-items:center;gap:13px;color:#d6e4dc;padding:12px;border-radius:10px;font-size:14px;border:1px solid transparent}#ux-navigation a small{display:block;color:#a8bdb1;font-size:10px;font-weight:400;margin-top:1px}#ux-navigation a:hover{background:#263f32}#ux-navigation a[aria-current="page"]{background:#e6efdf;color:#1b382a;border-color:#cedac3;font-weight:700}#ux-navigation a[aria-current="page"] small{color:#526a55}.ux-nav-icon{width:20px;flex:none;font-size:21px;text-align:center;font-weight:400;line-height:1}.ux-sidebar-bottom{margin-top:auto;padding:20px 8px 0;color:#acc3b3;font-size:11px}.ux-sidebar-bottom p{margin:12px 0;line-height:1.7}#ux-show-all{background:transparent;color:#d3e3d7;border:1px solid #4b6456;width:100%;font-size:12px}#ux-show-all[aria-pressed="true"]{background:#dfeada;color:#25422e}.ux-build{color:#91ac9a;font-size:10px}
+#ux-topbar{position:sticky;top:0;margin-left:var(--ux-side);padding:15px 30px;height:var(--ux-top);background:#fdfefaed;backdrop-filter:blur(12px);border:0;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:16px;color:var(--ink);z-index:25}.ux-breadcrumb{display:flex;gap:12px;align-items:center;white-space:nowrap;font-size:13px}.ux-breadcrumb>span{color:#6b7b70}.ux-breadcrumb strong{font-weight:600}.ux-top-actions{display:flex;gap:8px;align-items:center}.ux-top-actions button{white-space:nowrap;font-size:12px;min-height:38px;padding:8px 12px}.ux-top-actions kbd{margin-left:8px}kbd{font:10px/1.5 system-ui,sans-serif;border:1px solid #cad7ca;padding:1px 5px;border-radius:4px;color:#687b6c;background:#f4f7f1}#ux-search-open{background:transparent;border-color:transparent;color:var(--muted)}#ux-text-size{background:transparent;border-color:transparent;color:var(--muted)}#ux-text-size[aria-pressed="true"]{background:var(--soft);color:var(--accent)}#ux-content{position:absolute;top:0}.ux-skip{position:fixed;left:238px;top:-90px;z-index:80;background:#fff;padding:12px;border:2px solid var(--accent);border-radius:6px}.ux-skip:focus{top:12px}
+main{max-width:1540px;padding:30px 36px 78px;margin:0 0 0 var(--ux-side)}main>section,main>.grid,main>details{scroll-margin-top:98px}.ux-page-heading{display:flex;justify-content:space-between;gap:16px;margin-bottom:22px}.ux-eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.15em;color:var(--accent);font-weight:700;margin:0 0 6px}.ux-page-heading h1{font-size:28px;line-height:1.3;letter-spacing:-.04em;margin:4px 0 9px;font-weight:690}.ux-page-heading p:last-child{font-size:13px;color:var(--muted);margin:0;max-width:65ch}.ux-mode-tag{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:24px;padding:5px 11px;align-self:start;white-space:nowrap;margin-top:5px}.panel{border-radius:14px;padding:24px;border:1px solid var(--line);box-shadow:var(--shadow);margin-bottom:20px}.panel h2{font-size:19px;font-weight:670;gap:10px;line-height:1.5}.panel h3{font-size:16px}.num{font-size:11px;padding:3px 8px;background:#eef2e8;border:1px solid #dde6d8;font-variant-numeric:tabular-nums}.grid{gap:22px}.formrow{gap:18px}label.field{font-size:var(--ux-reading);font-weight:570;margin-bottom:18px}input,textarea,select{border-radius:8px;font-size:var(--ux-reading);padding:11px 12px;background:#fcfdfb;line-height:1.55}textarea{min-height:110px}#prompt{font-size:calc(var(--ux-reading) + 1px);line-height:1.9;min-height:196px}.hint{font-size:13px;line-height:1.75;margin:10px 0 14px}.checkline{font-size:13px;line-height:1.7}.small{font-size:12px}.warningbox{border:1px solid #e5d8b9;border-left:3px solid #b9964c;background:#fbf8ef;border-radius:6px;font-size:12px;color:#715322;line-height:1.75;padding:12px 15px}.tag{vertical-align:middle;align-self:start;padding:3px 7px;font-size:11px;border-color:#dae4d7;margin:0 5px 5px 0}.tag.good{background:#eef4e8;color:#456440}.empty{padding:32px 20px;background:linear-gradient(145deg,#fbfcf9,#f5f8f2);border:1px dashed #becfbe;border-radius:10px;font-size:13px;color:#5c7162;line-height:1.8}details>summary{font-size:13px;padding:7px 0;color:#536956}details[open]>summary{margin-bottom:12px}details.panel{background:#fafcf8;padding:18px 22px}.actions{gap:8px;align-items:center}.actions .primary{box-shadow:0 2px 3px #1938280d}pre{background:#f1f5ed;border:1px solid #dee7da;line-height:1.75;max-height:340px}code{overflow-wrap:anywhere}video{border-radius:10px;background:#14251e}#review-section .candidate-card{background:#f6f8f3;border-color:#d7e2d4;padding:16px}#review-section .candidate-card video{background:#11221b}#review-section .candidate-card h3{font-weight:650}.footer{font-size:11px;border-top:1px solid var(--line);padding:20px 0 15px;margin-top:26px}.toolbar{margin-bottom:18px}.toolbar>button.danger{margin-left:auto}.status{font-size:12px;background:#eaf2e7;border-color:#d2e1cc;padding:11px 15px;border-radius:9px;margin-bottom:20px}.status.error{background:#fff1ef;color:#943b35;border-color:#e7c5be}#status{scroll-margin-top:90px}#ux-notification{position:fixed;right:24px;bottom:64px;z-index:45;max-width:min(500px,calc(100vw - 32px));padding:14px 16px;background:#fff;border:1px solid #a9c3ad;box-shadow:0 12px 45px #183c2220;border-radius:10px;display:flex;gap:14px;align-items:start;font-size:13px;overflow-wrap:anywhere}#ux-notification.error{border-color:#dba8a8;background:#fff7f6;color:#872c2c}#ux-notification p{margin:0}#ux-notification button{flex:none;min-height:28px;padding:2px 7px;font-size:12px}
+#studio-home{padding:0;background:transparent;border:0;box-shadow:none}#studio-home>.brandline{display:none}#studio-home>.hint,#studio-home>p{display:none}.desk-hub{margin:0 0 22px;gap:20px}.desk-hub>div{border-radius:14px;padding:24px;background:#fff;box-shadow:var(--shadow)}.desk-hub h3{font-size:19px;letter-spacing:-.01em;font-weight:650;margin-bottom:8px}.desk-hub>div:first-child{background:linear-gradient(120deg,#edf4e6,#f8fbf5);border-color:#ccdcca}#intake-drop>.filebtn{margin-top:10px;background:#18654d;color:white;border-color:#18654d;padding:12px 18px}.desk-hub p{font-size:13px}#desk-checkout .actions{margin-top:22px}#desk-checkout .actions button,#desk-checkout .actions label{font-size:12px}.studio-routes{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:20px 0}.studio-routes a{background:#fff;padding:18px;border-radius:12px;min-height:105px;box-shadow:var(--shadow);transition:background .12s,border-color .12s}.studio-routes a:hover{background:#f3f7ed;border-color:#98b797}.studio-routes strong{font-size:14px;font-weight:650}.studio-routes span{font-size:11px;line-height:1.65;margin-top:10px}.ux-home-kicker{display:flex;align-items:center;justify-content:space-between;margin:6px 0 10px;font-size:12px;color:var(--muted)}.ux-home-kicker strong{font-size:14px;color:var(--ink)}#ux-legacy-backup{border:1px solid var(--line);border-radius:10px;background:#fff;padding:13px 18px;margin-top:16px}#ux-legacy-backup .actions{margin-top:5px}#ux-shot-tools{padding:0;border:0;background:transparent;margin:0 0 14px}#ux-shot-tools>summary{font-size:12px}#workspace-section{background:#f9fbf6}.ux-view-hidden{display:none!important}#ux-save-strip{position:fixed;bottom:0;right:0;left:var(--ux-side);padding:10px 28px;background:#fcfefaef;border-top:1px solid var(--line);z-index:26;display:flex;gap:10px;align-items:center;font-size:12px;color:#5a6d5e;min-height:46px;backdrop-filter:blur(10px)}#ux-save-summary{min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#ux-save-indicator{width:7px;height:7px;flex:none;background:#b68b3d;border-radius:50%}#ux-save-strip[data-state="verified"] #ux-save-indicator{background:#246a42}#ux-save-strip[data-state="error"] #ux-save-indicator{background:#b34e46}#ux-save-detail{border:0;background:transparent;font-size:11px;padding:2px 5px;min-height:26px;color:#45634b}body.ux-large .hint,body.ux-large .checkline{font-size:15px}body.ux-large .panel h2{font-size:21px}body.ux-large .warningbox{font-size:14px}
+#ux-search-dialog{border:1px solid #d5e0d2;border-radius:18px;padding:24px;width:min(570px,calc(100vw - 28px));max-height:80vh;box-shadow:0 28px 90px #061d2b40;color:var(--ink);background:#fcfefa}#ux-search-dialog::backdrop{background:#18302766;backdrop-filter:blur(3px)}.ux-dialog-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:10px}.ux-dialog-head h2{margin:0;font-size:21px}.ux-dialog-head button{font-size:12px;min-height:30px;padding:4px 8px}.ux-search-label{font-size:12px;color:var(--muted)}#ux-search-input{background:#fff;padding:13px 14px;font-size:16px}#ux-search-results{display:grid;gap:6px;max-height:40vh;overflow:auto}#ux-search-results button{display:flex;align-items:center;justify-content:space-between;text-align:left;width:100%;background:#fff;padding:12px 14px;min-height:56px;font-size:14px}#ux-search-results small{display:block;font-size:11px;color:var(--muted);font-weight:400;margin-top:2px}#ux-search-results button:hover{background:var(--soft)}.ux-search-foot{font-size:11px;color:var(--muted);margin:17px 0 0;line-height:1.8}.ux-search-foot span{display:block;color:#7a8d7e}#ux-search-count{font-size:11px;margin:9px 0}body.ux-all #ux-show-all{background:#e6efdf;color:#213d2a}body.ux-all .ux-page-heading h1{font-size:24px}
+@media(min-width:1700px){main{margin-left:calc(var(--ux-side) + (100vw - 1700px)/2);margin-right:calc((100vw - 1700px)/2)}}
+@media(max-width:1180px){:root{--ux-side:198px}.ux-top-actions kbd{display:none}#ux-topbar{padding:14px 22px}.ux-top-actions{gap:5px}main{padding:25px 25px 74px}.ux-breadcrumb>span{display:none}.grid{grid-template-columns:1fr}.studio-routes{grid-template-columns:repeat(2,minmax(0,1fr))}.desk-hub{grid-template-columns:1fr}.desk-hub>div{padding:21px}#ux-navigation a{padding:11px 8px;gap:10px}.ux-sidebar-bottom{padding-left:0;padding-right:0}}
+@media(max-width:760px){:root{--ux-side:0px;--ux-top:64px}#ux-sidebar{position:sticky;inset:initial;top:64px;width:100%;background:#f7faf3;color:var(--ink);padding:7px 12px;border-bottom:1px solid var(--line);display:block;z-index:24}#ux-sidebar .ux-brand,#ux-sidebar .ux-nav-caption,#ux-sidebar .ux-sidebar-bottom{display:none}#ux-navigation{display:flex;gap:5px;overflow-x:auto;scrollbar-width:thin;padding:2px 0}#ux-navigation a{padding:7px 11px;gap:5px;white-space:nowrap;color:#496052;font-size:12px;flex:none;border:1px solid transparent;min-height:37px}#ux-navigation a small,#ux-navigation .ux-nav-icon{display:none}#ux-navigation a:hover{background:#e5eedf}#ux-navigation a[aria-current="page"]{background:#e5eedf;color:#234b32;border-color:#cfddc9}#ux-topbar{position:sticky;top:0;margin:0;padding:10px 14px;height:64px;z-index:30;order:-1}.ux-breadcrumb{font-size:14px}.ux-top-actions #ux-open,.ux-top-actions #ux-text-size{display:none}.ux-top-actions #ux-search-open{font-size:12px;padding:7px}.ux-top-actions #ux-search-open>span:nth-child(2){display:none}.ux-top-actions #ux-search-open>span:first-child{font-size:23px}.ux-top-actions #ux-save{font-size:12px;padding:8px 10px;min-height:37px}body.ux-ready{display:flex;flex-direction:column}main{margin:0;padding:22px 16px 76px;width:100%}.ux-page-heading h1{font-size:25px}.ux-page-heading{margin-bottom:19px}.ux-page-heading p:last-child{font-size:12px;max-width:40ch}.ux-mode-tag{display:none}.panel{padding:18px;border-radius:12px}.panel h2{font-size:18px}.hint{font-size:12px;line-height:1.75}.desk-hub{gap:15px}.desk-hub>div{padding:20px}.studio-routes{gap:9px}.studio-routes a{min-height:96px;padding:14px}.studio-routes span{font-size:10px}.desk-hub .actions{flex-direction:row;align-items:center}#desk-checkout .actions .filebtn{flex:1}.desk-hub .actions button{flex:1;min-width:100px}.ux-skip{left:12px}.ux-skip:focus{top:5px}#ux-save-strip{left:0;padding:9px 15px;font-size:11px}#ux-notification{right:12px;bottom:60px}html{scroll-padding-top:138px}main>section,main>.grid,main>details{scroll-margin-top:140px}#ux-search-dialog{padding:19px}.ux-dialog-head h2{font-size:19px}#ux-search-results{max-height:42vh}.ux-top-actions{gap:4px}.footer{font-size:10px}body.ux-large .hint{font-size:14px}}
+@media(max-width:390px){.ux-top-actions #ux-save{font-size:11px;padding:8px}.ux-breadcrumb{font-size:12px}#ux-topbar{gap:7px}.panel{padding:16px}.formrow.triple{grid-template-columns:1fr}.actions button{min-width:110px}#ux-save-summary{max-width:calc(100vw - 115px)}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+@media print{#ux-sidebar,#ux-topbar,#ux-save-strip,#ux-notification,.ux-skip,#ux-search-dialog{display:none!important}main{margin:0;padding:0;max-width:none}.ux-view-hidden{display:block!important}.panel{break-inside:avoid;box-shadow:none}}
+</style>
 </head>
 <body>
-<header><div class="top"><div><div class="brand">MANJU ONE · LOCAL STUDIO</div><h1>把一个镜头，交代清楚。</h1></div><span class="pill">离线运行 · 文件不上传</span></div><p>先确定要做什么，再核对型号、绑定素材、记录人工决定。这里不调用生成 API，不自动选片。</p></header>
+<a class="ux-skip" href="#ux-content">跳到当前工作区</a>
+<aside id="ux-sidebar" aria-label="Manju 工作区导航">
+ <a class="ux-brand" href="#studio-home" aria-label="Manju 创作间，返回首页"><span class="ux-monogram" aria-hidden="true">m<span>·</span></span><span>MANJU<small>你的本地创作间</small></span></a>
+ <div class="ux-nav-caption">工作区</div>
+ <nav id="ux-navigation" aria-label="切换工作区">
+  <a href="#studio-home" data-view="home"><span class="ux-nav-icon" aria-hidden="true">◫</span><span>开始与保存<small>继续工作 · 收工带走</small></span></a>
+  <a href="#ux-shot" data-view="shot"><span class="ux-nav-icon" aria-hidden="true">▤</span><span>镜头与素材<small>表达想法 · 确认交接</small></span></a>
+  <a href="#review-section" data-view="review"><span class="ux-nav-icon" aria-hidden="true">▷</span><span>审片与定稿<small>看候选 · 记录决定</small></span></a>
+  <a href="#director-section" data-view="director"><span class="ux-nav-icon" aria-hidden="true">▧</span><span>导演与精修<small>定运动 · 定画面</small></span></a>
+  <a href="#repair-section" data-view="repair"><span class="ux-nav-icon" aria-hidden="true">⌁</span><span>局部返工<small>明确要改的范围</small></span></a>
+  <a href="#exchange-section" data-view="exchange"><span class="ux-nav-icon" aria-hidden="true">⇄</span><span>外部协作<small>带出去 · 带回来</small></span></a>
+  <a href="#flex-section" data-view="flex"><span class="ux-nav-icon" aria-hidden="true">⊞</span><span>组合与模板<small>复用做对的部分</small></span></a>
+ </nav>
+ <div class="ux-sidebar-bottom"><button id="ux-show-all" type="button" aria-pressed="false">完整长页视图</button><p>文件留在本地<br>不自动生成、选片或付款</p><span class="ux-build">0.2.0+r16.6</span></div>
+</aside>
+<header id="ux-topbar">
+ <div class="ux-breadcrumb"><span>创作间</span><span aria-hidden="true">/</span><strong id="ux-current">开始与保存</strong></div>
+ <div class="ux-top-actions"><button id="ux-search-open" type="button" aria-haspopup="dialog" aria-controls="ux-search-dialog"><span aria-hidden="true">⌕</span><span>快速找到</span><kbd>Ctrl K</kbd></button><button id="ux-text-size" type="button" aria-pressed="false" title="只改变阅读字号，不改变素材尺寸">大字阅读</button><button id="ux-open" type="button">打开材料</button><button id="ux-save" class="primary" type="button" title="保存收工包 ZIP，Ctrl / ⌘ + S">保存收工包<span aria-hidden="true"> ↗</span></button></div>
+</header>
+<div id="ux-content" tabindex="-1"></div>
+<dialog id="ux-search-dialog" aria-labelledby="ux-search-title">
+ <div class="ux-dialog-head"><h2 id="ux-search-title">你想做什么？</h2><button id="ux-search-close" type="button" aria-label="关闭快速查找">关闭 <kbd>Esc</kbd></button></div>
+ <label class="ux-search-label" for="ux-search-input">查找功能或工作区</label><input id="ux-search-input" type="search" placeholder="例如：精修、找回素材、保存、模板…" autocomplete="off" maxlength="120">
+ <p id="ux-search-count" class="hint" role="status"></p><div id="ux-search-results" aria-label="匹配入口"></div>
+ <p class="ux-search-foot">只带你去对应入口，不会执行生成、恢复或删除。<span>↑ ↓ 选择　Enter 前往</span></p>
+</dialog>
+<div id="ux-save-strip"><span id="ux-save-indicator" aria-hidden="true"></span><span id="ux-save-summary">工作仅在当前页面，请保存收工包。</span><button id="ux-save-detail" type="button">查看 / 核验</button></div>
+
 <main>
 <section class="panel" id="studio-home">
- <div class="brandline"><div><span class="tag good">R16 · 可外部往返的个人创作台</span><h2>打开材料，继续创作，收工带走。</h2></div><span class="tag">离线 · 人工确认</span></div>
+ <div class="brandline"><div><span class="tag good">0.2.0+r16.6 · 可外部往返的个人创作台</span><h2>打开材料，继续创作，收工带走。</h2></div><span class="tag">离线 · 人工确认</span></div>
  <p class="hint"><a href="#flex-section">自由组合与个人模板</a> · 沿用你的质量优先规则，不自动选型、生成或付款。现在可把镜头与审片、局部返工、导演材料一起存成一个总备份；原有单区 ZIP 继续可用。</p>
  <p><a href="#exchange-section">外部工具往返：带走原素材，逐字段带回文字修改 →</a></p>
  <div id="desk-hub" class="desk-hub">
@@ -86,7 +128,7 @@
 <div class="toolbar"><label class="filebtn" for="import-request">导入任务 / 镜头<input class="hidden" id="import-request" type="file" accept=".json,application/json"></label><label class="filebtn" for="import-catalog">导入能力档<input class="hidden" id="import-catalog" type="file" accept=".json,application/json"></label><button id="export-catalog">保存能力档</button><button id="open-review">审片与定稿 ↓</button><span class="grow"></span><button id="reset" class="quiet danger">清空当前草稿</button></div>
 <section id="catalog-preview" class="panel" hidden><h2>能力档变更预览</h2><p id="catalog-summary"></p><p>这只是带来源声明的本地比较，不联网验证、不自动应用，也不会授权商业生成。可先在顶部保存旧能力档。</p><details><summary>查看字段差异、任务影响和复核窗口</summary><pre id="catalog-diff" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto"></pre></details><label><input id="catalog-confirmed" type="checkbox">我已查看变化，同意替换能力档并清除当前型号选择与确认</label><div class="toolbar"><button id="catalog-refresh">重新预览当前任务</button><button id="apply-catalog" disabled>应用已预览能力档</button><button id="catalog-revert" disabled>预览恢复上一能力档</button><button id="catalog-save-review">下载比较记录</button></div></section>
 
-<div id="status" role="status" aria-live="polite" class="status">准备就绪。填写镜头后点击“检查适配”。文件只在当前浏览器中读取。</div>
+<div id="status" role="status" aria-live="polite" class="status">准备就绪。打开材料，或从工作区开始；文件只在本地读取。</div>
 <section class="panel" id="workspace-section"><h2>镜头任务与审片现场</h2><p class="hint">换窗口或换电脑前，把任务、能力档、审片历史、未完成的文字和实际素材一起保存。恢复前逐文件验哈希，历史记录不等于重新批准。</p><div class="actions"><button id="export-workspace">备份整个工作现场 ZIP</button><label class="filebtn" for="import-workspace">核验并恢复工作现场<input class="hidden" id="import-workspace" type="file" accept=".zip,application/zip"></label></div><p class="hint" id="workspace-status">备份包括被任务和审片引用的实际媒体，不含下方独立返工区和导演区；缺少文件会明确拒绝，不产生看似完整的空壳备份。请自行保留原 ZIP。</p></section>
 <div class="grid"><div>
 <section class="panel"><h2><span class="num">01</span> 定义镜头任务</h2>
@@ -172,7 +214,7 @@
 </details>
 
 <div class="actions"><button id="director-export" class="primary">保存导演材料 ZIP（含原片和所有图）</button><label class="filebtn" for="director-import">核验并重新打开导演 ZIP<input class="hidden" id="director-import" type="file" accept=".zip,application/zip"></label></div>
-<p class="hint">导演区单独保存，不包含在上方“镜头任务与审片现场”或返工 ZIP 中。关闭前分别保存需要的区域，并到下载列表确认。重新打开只替换导演区，不覆盖上方任务或工程。</p>
+<p class="hint">完整收工请用顶栏“保存收工包”，会同时保存三个工作区。这里的导演 ZIP 适合单独交接，只包含导演材料；重新打开只替换导演区，不覆盖镜头任务或工程。</p>
 <p id="director-status" role="status" aria-live="polite" class="hint">未上传任何素材。</p>
 <details><summary>查看当前导演交接说明</summary><pre id="director-brief"></pre></details>
 </section>
@@ -268,7 +310,7 @@
 </style>
 
 <details class="panel"><summary>使用与保存说明</summary><p>本页面不依赖服务器或第三方脚本。草稿尝试保存在当前浏览器的本地存储中，但浏览器清理、隐私模式或 file:// 限制都可能让它失效；请把 JSON 或 ZIP 导出到自己的磁盘。恢复草稿不会恢复媒体字节，必须重新绑定文件。</p><p>从已有工程导入：<code>manju models from-shot 项目目录 镜头编号 --output shot-import.json</code>，然后在这里“导入任务 / 镜头”。原项目不被修改。</p><p>新适配包是独立伴随文件，不向旧 R2 provider-handoff 插入内容。它不生成视频，不连接商用接口，不改动原影片的选片或锁片状态。</p><p>JSON 数据只按文本显示；能力来源网址仅作证据记录，不由本页面自动访问。</p></details>
-<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">R16 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
+<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">0.2.0+r16.6 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
 </main>
 <script id="builtin-quality" type="application/json">{
   "schema_id": "manju.quality-shortlist/v1",
@@ -4145,7 +4187,7 @@ async function prepareIntake(files){
 $('intake-files').addEventListener('change',handled(async event=>{try{await prepareIntake([...event.target.files]);}catch(e){intakeNotice('未打开：'+e.message,true);throw e;}finally{event.target.value='';}}));
 $('intake-destination').addEventListener('change',()=>{$('intake-confirmed').checked=false;deskChanged();});$('intake-confirmed').addEventListener('change',deskChanged);
 $('intake-cancel').addEventListener('click',()=>{deskState.intakeSerial++;deskState.intake=null;$('intake-preview').hidden=true;intakeNotice('已取消，原文件和当前工作未改变。');});
-function intakeReveal(id){const target=$(id);if(!target)return;for(let p=target;p;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;target.scrollIntoView({block:'start'});}
+function intakeReveal(id){window.ManjuExperience?.reveal(id,{scroll:false});const target=$(id);if(!target)return;for(let p=target;p;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;target.scrollIntoView({block:'start'});}
 $('intake-open').addEventListener('click',()=>{
  try{
   require(!studioBusy()&&activeUIOperations===0&&deskState.intake,'请先识别文件，等待当前操作完成');const current=deskState.intake,route=current.routes[Number($('intake-destination').value)];require(current.guard===deskGuard()&&route,'工作已改变，请重新打开');require(!route.replace||$('intake-confirmed').checked,'请明确确认替换目标区');
@@ -4295,6 +4337,155 @@ $('relink-report').addEventListener('click',relinkHandle(()=>{
 for(const type of ['input','change','click'])document.addEventListener(type,()=>queueMicrotask(relinkChanged));
 window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPrepare,apply:relinkApply,guard:relinkGuard};
 
+})();
+</script>
+<script>/* A navigation/presentation layer only: preserve live nodes, input values, guards,
+   media bytes and all existing approval/export handlers. No persistence or network. */
+(() => {
+ 'use strict';
+ const $ = id => document.getElementById(id);
+ if (!$('ux-sidebar') || !window.ManjuDesk) return;
+ const main = document.querySelector('main');
+ const views = {
+  home: {title:'开始与保存',heading:'把注意力留给创作。',note:'打开一份材料继续工作；收工时，把原素材和待处理意见一起带走。',en:'YOUR LOCAL CREATIVE SPACE',target:'studio-home'},
+  shot: {title:'镜头与素材',heading:'先把这个镜头说清楚。',note:'写下画面与声音，绑定参考素材，再选择适配路径。质量优先，不自动降档。',en:'SHOT & REFERENCES',target:'ux-shot'},
+  review: {title:'审片与定稿',heading:'先看画面，再做决定。',note:'比较实际候选，保留每次人工意见。规格通过不等于创作批准。',en:'REVIEW & DECIDE',target:'review-section'},
+  director: {title:'导演与精修',heading:'定好运动，再打磨画面。',note:'保留运动底片，提取关键时刻，带出精修，再把高分辨率目标图接回来。',en:'DIRECT & REFINE',target:'director-section'},
+  repair: {title:'局部返工',heading:'只交代需要改变的部分。',note:'标记返工范围、上下文与保留要求。原视频始终保留，不自动剪切或覆盖。',en:'REFINE A MOMENT',target:'repair-section'},
+  exchange: {title:'外部协作',heading:'带走材料，带回好修改。',note:'文字与原素材一起导出。返回时逐字段核对，不让外部旧稿覆盖本地新内容。',en:'WORK WITH YOUR TOOLS',target:'exchange-section'},
+  flex: {title:'组合与模板',heading:'把做对的部分留下来。',note:'取用另一方案的工作区，或套用自己的文字模板。未选部分保持不变。',en:'REUSE & EXPLORE',target:'flex-section'}
+ };
+ let current='home',all=false,notificationTimer=null,saveTimer=null,lastNotice='';
+ const scrollPositions=new Map();
+ const nodes=new Map();
+ function register(node,view){if(node){node.dataset.uxView=view;nodes.set(node,view);}}
+ register($('studio-home'),'home');
+ const oldToolbar=main.querySelector(':scope > .toolbar');
+ const tools=document.createElement('details');tools.id='ux-shot-tools';tools.dataset.uxDisclosure='';
+ const toolsLabel=document.createElement('summary');toolsLabel.textContent='任务文件、能力档与单区备份';tools.append(toolsLabel);
+ if(oldToolbar){oldToolbar.before(tools);tools.append(oldToolbar);}
+ if($('workspace-section'))tools.append($('workspace-section'));
+ register(tools,'shot');register($('catalog-preview'),'shot');
+ const grid=main.querySelector(':scope > .grid');if(grid){grid.id='ux-shot';register(grid,'shot');}
+ for(const key of ['review','director','repair','exchange','flex'])register($(views[key].target),key);
+ // Keep old backup controls available, but stop competing with the daily save action.
+ const home=$('studio-home'),routes=home.querySelector('.studio-routes');
+ const legacy=document.createElement('details');legacy.id='ux-legacy-backup';legacy.dataset.uxDisclosure='';
+ const legacyTitle=document.createElement('summary');legacyTitle.textContent='旧版总备份与兼容恢复';legacy.append(legacyTitle);
+ if(routes){let n=routes.nextSibling;while(n){const next=n.nextSibling;legacy.append(n);n=next;}home.append(legacy);
+  const label=document.createElement('div');label.className='ux-home-kicker';label.innerHTML='<strong>从这里继续</strong><span>随时切换，输入不会丢</span>';routes.before(label);
+ }
+ const heading=document.createElement('div');heading.className='ux-page-heading';
+ heading.innerHTML='<div><p id="ux-eyebrow" class="ux-eyebrow"></p><h1 id="ux-heading" tabindex="-1"></h1><p id="ux-description"></p></div><span class="ux-mode-tag">本地运行 · 原片保留</span>';
+ main.prepend(heading);
+ const status=$('status');if(status)heading.after(status);
+ const help=main.querySelector(':scope > details.panel');if(help){help.id=help.id||'ux-help';register(help,'home');}
+ const header=$('ux-topbar');
+ const notice=document.createElement('div');notice.id='ux-notification';notice.hidden=true;
+ const noticeText=document.createElement('p'),noticeClose=document.createElement('button');noticeClose.type='button';noticeClose.textContent='关闭';noticeClose.setAttribute('aria-label','关闭操作提示');notice.append(noticeText,noticeClose);document.body.append(notice);
+ noticeClose.addEventListener('click',()=>{notice.hidden=true;clearTimeout(notificationTimer);});
+ function notify(text,error=false){
+  if(!text||text===lastNotice)return;lastNotice=text;noticeText.textContent=text;notice.classList.toggle('error',error);notice.hidden=false;clearTimeout(notificationTimer);
+  if(!error)notificationTimer=setTimeout(()=>{notice.hidden=true;},6500);
+ }
+ function revealDetails(target){for(let p=target;p&&p!==main;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;}
+ function viewFor(target){if(!target)return null;if(target.id==='workspace-section')return 'shot';for(let p=target;p&&p!==main;p=p.parentElement)if(p.dataset.uxView)return p.dataset.uxView;return null;}
+ function present({scroll=true,focus=false}={}){
+  for(const[node,view]of nodes)node.classList.toggle('ux-view-hidden',!all&&view!==current);
+  document.body.classList.toggle('ux-all',all);
+  for(const link of document.querySelectorAll('#ux-navigation [data-view]')){
+   if(link.dataset.view===current&&!all)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');
+  }
+  $('ux-show-all').setAttribute('aria-pressed',String(all));$('ux-show-all').textContent=all?'返回分区视图':'完整长页视图';
+  const info=views[current];$('ux-current').textContent=all?'完整长页':info.title;$('ux-heading').textContent=all?'所有工具，完整展开。':info.heading;
+  $('ux-eyebrow').textContent=all?'COMPLETE WORKBENCH':info.en;$('ux-description').textContent=all?'这是原有的完整工作方式。需要专注时，切回分区视图；文字与素材保持不变。':info.note;
+  // Avoid invisible video/audio continuing to play when switching tasks. Never seek or autoplay.
+  if(!all)for(const media of main.querySelectorAll('video,audio'))if(media.closest('.ux-view-hidden'))media.pause();
+  if(scroll)window.scrollTo({top:0,behavior:'auto'});if(focus)$('ux-heading').focus({preventScroll:true});
+ }
+ function navigate(view,{scroll=true,focus=false}={}){if(!views[view])return false;if(!all&&current!==view)scrollPositions.set(current,window.scrollY);current=view;present({scroll:false,focus});if(scroll)window.scrollTo({top:all?0:(scrollPositions.get(view)||0),behavior:'auto'});return true;}
+ function reveal(id,{scroll=true,focus=false}={}){
+  const target=$(id);if(!target)return false;
+  const view=viewFor(target);if(view)navigate(view,{scroll:false});revealDetails(target);
+  if(scroll)target.scrollIntoView({block:'start',behavior:'auto'});
+  if(focus){if(target.matches('input,textarea,select,button'))target.focus({preventScroll:true});else{$('ux-heading').focus({preventScroll:true});}}
+  return true;
+ }
+ function showAll({scroll=true}={}){all=true;for(const e of document.querySelectorAll('[data-ux-disclosure]'))e.open=true;present({scroll});}
+ $('ux-show-all').addEventListener('click',()=>{if(all){all=false;present({focus:true});}else showAll();});
+ // In-page links remain real links with useful labels, no dispatch into data handlers.
+ document.addEventListener('click',event=>{
+  const a=event.target.closest('a[href^="#"]');if(!a||event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+  const id=a.getAttribute('href').slice(1);if(!id)return;
+  if(a.dataset.view){event.preventDefault();navigate(a.dataset.view,{focus:true});if(all)reveal(views[a.dataset.view].target);return;}
+  if(id==='ux-content'){event.preventDefault();$('ux-heading').focus();return;}
+  if($(id)&&viewFor($(id))){event.preventDefault();reveal(id,{focus:true});}
+ });
+ // Original workflows request navigation explicitly; no DOM-prototype patching.
+ $('open-review')?.addEventListener('click',()=>reveal('review-section'));
+ $('ux-open').addEventListener('click',()=>{navigate('home');$('intake-files').click();});
+ function save(){if(window.ManjuDesk.isBusy()){notify('正在处理文件，请等当前操作完成。',true);return;}$('desk-save').click();syncSave();}
+ $('ux-save').addEventListener('click',save);
+ $('ux-save-detail').addEventListener('click',()=>reveal('desk-checkout',{focus:true}));
+ $('ux-text-size').addEventListener('click',()=>{const enabled=document.body.classList.toggle('ux-large');$('ux-text-size').setAttribute('aria-pressed',String(enabled));$('ux-text-size').textContent=enabled?'标准字号':'大字阅读';});
+ function syncSave(){
+  const busy=window.ManjuDesk.isBusy();$('ux-save').disabled=busy;$('ux-save').textContent=busy?'正在整理…':'保存收工包 ↗';
+  const strip=$('ux-save-strip'),changed=window.ManjuDesk.needsSave(),verified=Boolean(window.ManjuDesk.state.verified)&&!changed;
+  strip.dataset.state=verified?'verified':changed?'dirty':'unverified';
+  $('ux-save-summary').textContent=busy?'正在整理原素材，请等待；新输入不会冒充已保存。':verified?'当前收工包已核验；继续编辑会提示重新保存。':changed?'有未核验备份的修改 · 收工时请保存并选回核验。':'尚未核验收工包 · 文件仅在本地读取，不自动云备份。';
+ }
+ function scheduleSync(){clearTimeout(saveTimer);saveTimer=setTimeout(syncSave,80);}
+ for(const type of ['input','change','click'])document.addEventListener(type,scheduleSync);
+ const observer=new MutationObserver(records=>{
+  if(records.some(r=>r.target===status||status?.contains(r.target)))notify(status.textContent,status.classList.contains('error'));
+  if(records.some(r=>r.target===$('desk-save-status')||$('desk-save-status').contains(r.target))){notify($('desk-save-status').textContent,$('desk-save-status').classList.contains('reason'));scheduleSync();}
+ });
+ if(status)observer.observe(status,{childList:true,subtree:true,characterData:true});observer.observe($('desk-save-status'),{childList:true,subtree:true,characterData:true});
+ // Unified intake can finish asynchronously. Surface its preview instead of hiding it.
+ for(const id of ['intake-preview','desk-restore-preview','studio-restore-preview','catalog-preview']){
+  const node=$(id);if(!node)continue;new MutationObserver(()=>{if(!node.hidden)reveal(id);}).observe(node,{attributes:true,attributeFilter:['hidden']});
+ }
+ // Optional local continuation is injected after the self-contained page starts.
+ function connectContinuation(){const panel=$('continue-panel');if(panel&&!nodes.has(panel)){register(panel,'home');$('studio-home').after(panel);present({scroll:false});}}
+ new MutationObserver(connectContinuation).observe(main,{childList:true});connectContinuation();
+ const commands=[
+  ...Object.entries(views).map(([key,v])=>({name:v.title,description:v.note,target:v.target,words:key})),
+  {name:'找回改名 / 搬家的素材',description:'按内容核对原文件，不按同名替换。',target:'relink-panel',words:'缺失 重新绑定 hash 原片'},
+  {name:'带出关键帧精修',description:'原图与逐图要求一起导出，返回后预览接回。',target:'retouch-section',words:'图片 修图 png 图像'},
+  {name:'保存或核验收工包',description:'前往保存入口，不立即下载或替换。',target:'desk-checkout',words:'备份 导出 zip 保存 下载 核验'},
+  {name:'检查模型适配',description:'按现有质量优先规则检查，不自动选择。',target:'check-plan',words:'模型 能力 参数 画幅 时长'},
+  {name:'返回视频规格检查',description:'核对时长、画幅与像素；不等于画质批准。',target:'return-section',words:'分辨率 720 1080 视频 检查'},
+  {name:'能力档与任务文件',description:'导入导出能力目录，变更前仍需预览确认。',target:'ux-shot-tools',words:'json catalog 配置 导入'},
+  {name:'大字阅读 / 标准字号',description:'仅改变显示字号，原图与视频不变。',action:'size',words:'字体 放大 阅读'},
+  {name:'完整长页 / 分区视图',description:'切换工具展示方式，输入和素材不变。',action:'all',words:'所有 工具 完整 视图'},
+  {name:'本机续作恢复点',description:'需要使用可选本机入口；普通 HTML 不开启自动保存。',target:'continue-panel',words:'自动保存 本地 恢复点 续作'}
+ ];
+ const dialog=$('ux-search-dialog'),search=$('ux-search-input'),results=$('ux-search-results');let previousFocus=null;
+ function runCommand(command){dialog.close();if(command.action==='size')$('ux-text-size').click();else if(command.action==='all')$('ux-show-all').click();else if(!reveal(command.target,{focus:true}))notify('普通 HTML 未开启本机续作。请从解压目录运行 OPEN_CONTINUE_WINDOWS.cmd（需要 Python 3.11+）。');}
+ function renderSearch(){
+  const terms=search.value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean),found=commands.filter(c=>terms.every(t=>(c.name+' '+c.description+' '+c.words).toLocaleLowerCase().includes(t)));
+  results.replaceChildren();$('ux-search-count').textContent=found.length?`${found.length} 个入口 · 只导航，不执行创作操作`:'没有匹配的入口。可试试“保存”“精修”“找回”。';
+  for(const c of found){const button=document.createElement('button');button.type='button';const label=document.createElement('span');label.textContent=c.name;const small=document.createElement('small');small.textContent=c.description;label.append(small);const arrow=document.createElement('span');arrow.textContent='↗';arrow.setAttribute('aria-hidden','true');button.append(label,arrow);button.addEventListener('click',()=>runCommand(c));results.append(button);}
+ }
+ function openSearch(){if(dialog.open)return;previousFocus=document.activeElement;search.value='';renderSearch();dialog.showModal();search.focus();}
+ $('ux-search-open').addEventListener('click',openSearch);$('ux-search-close').addEventListener('click',()=>dialog.close());
+ dialog.addEventListener('close',()=>{if(document.activeElement===document.body||dialog.contains(document.activeElement))previousFocus?.focus({preventScroll:true});});
+ search.addEventListener('input',renderSearch);
+ dialog.addEventListener('keydown',event=>{
+  if(event.isComposing)return;if(event.key==='Escape'){event.preventDefault();dialog.close();return;}const buttons=[...results.querySelectorAll('button')],i=buttons.indexOf(document.activeElement);
+  if(event.key==='ArrowDown'&&buttons.length){event.preventDefault();buttons[(i+1)%buttons.length].focus();}
+  else if(event.key==='ArrowUp'&&buttons.length){event.preventDefault();if(i<=0)search.focus();else buttons[i-1].focus();}
+  else if(event.key==='Enter'&&document.activeElement===search&&buttons.length){event.preventDefault();buttons[0].click();}
+ });
+ document.addEventListener('keydown',event=>{
+  if(event.isComposing||event.keyCode===229||event.altKey)return;
+  if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&event.key.toLowerCase()==='k'){event.preventDefault();openSearch();}
+  if((event.ctrlKey||event.metaKey)&&!event.shiftKey&&event.key.toLowerCase()==='s'&&!dialog.open){event.preventDefault();save();}
+ });
+ const currentHash=()=>{let id;try{id=decodeURIComponent(location.hash.slice(1));}catch{return;}if(id&&$(id))reveal(id);};
+ window.addEventListener('hashchange',currentHash);
+ window.ManjuExperience={version:1,navigate,reveal,showAll,state:()=>({view:current,all,large:document.body.classList.contains('ux-large')}),openSearch};
+ document.body.classList.add('ux-ready');present({scroll:false});syncSave();currentHash();
 })();
 </script>
 </body></html>

@@ -143,7 +143,7 @@ async function prepareIntake(files){
 $('intake-files').addEventListener('change',handled(async event=>{try{await prepareIntake([...event.target.files]);}catch(e){intakeNotice('未打开：'+e.message,true);throw e;}finally{event.target.value='';}}));
 $('intake-destination').addEventListener('change',()=>{$('intake-confirmed').checked=false;deskChanged();});$('intake-confirmed').addEventListener('change',deskChanged);
 $('intake-cancel').addEventListener('click',()=>{deskState.intakeSerial++;deskState.intake=null;$('intake-preview').hidden=true;intakeNotice('已取消，原文件和当前工作未改变。');});
-function intakeReveal(id){const target=$(id);if(!target)return;for(let p=target;p;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;target.scrollIntoView({block:'start'});}
+function intakeReveal(id){window.ManjuExperience?.reveal(id,{scroll:false});const target=$(id);if(!target)return;for(let p=target;p;p=p.parentElement)if(p.tagName==='DETAILS')p.open=true;target.scrollIntoView({block:'start'});}
 $('intake-open').addEventListener('click',()=>{
  try{
   require(!studioBusy()&&activeUIOperations===0&&deskState.intake,'请先识别文件，等待当前操作完成');const current=deskState.intake,route=current.routes[Number($('intake-destination').value)];require(current.guard===deskGuard()&&route,'工作已改变，请重新打开');require(!route.replace||$('intake-confirmed').checked,'请明确确认替换目标区');

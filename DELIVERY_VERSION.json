@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.5",
+  "version": "0.2.0+r16.6",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -117,7 +117,8 @@
       "续作请求的响应正文受完整超时约束，卡住或迟到回执不标记保存成功",
       "恢复点只读内容摘要与筛选，精确字节绑定、坏点不删除、不恢复或授权",
       "本窗口保留恢复点按保存序列而非系统时钟，倒拨时间不误删较新点",
-      "逐关键帧精修任务、原图与逐张提示词导出，明确顶尖图像入口，分批返回时核对共用与单锚点基线、保留高像素PNG"
+      "逐关键帧精修任务、原图与逐张提示词导出，明确顶尖图像入口，分批返回时核对共用与单锚点基线、保留高像素PNG",
+      "分区工作台、常驻保存与真实备份状态、快捷查找和大字阅读；完整长页兼容视图，切换不改草稿素材或审批"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
@@ -125,7 +126,7 @@
   "formal_windows_release": false,
   "commercial_api_executed": false,
   "prior_verified_stage": "R16",
-  "prior_archive_sha256": "fddf7e0f508da75b4c176c655bbbb848238d08896373419ad1ca4b0559cc0e6d",
-  "maintenance_revision": "frontier-image-retouch-20260912",
-  "prior_verified_version": "0.2.0+r16.4"
+  "prior_archive_sha256": "5a53f6bd6d29206266690422265d4018ff60297579c6cdd82f601b745e2048bc",
+  "maintenance_revision": "focused-creative-experience",
+  "prior_verified_version": "0.2.0+r16.5"
 }

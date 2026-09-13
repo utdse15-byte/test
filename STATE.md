@@ -1,5 +1,5 @@
-# Active State: Manju R16 maintenance 0.2.0+r16.5
+# Active State: Manju R16 maintenance 0.2.0+r16.6
 
-先完整阅读 `PROJECT_STATE_2026-09-13_02-18-00.md`。
+先完整阅读 `PROJECT_STATE_2026-09-13_03-30-47.md`。
 
-具体入口关键帧精修、分批接回与防错匹配已实现；原片、质量名单、续作及旧协议保留。交付成功以实际文件与收据为准。
+本轮聚焦离线创作工作台的观看与操作体验；原协议、媒体与质量偏好保留。实际交付只认最终PACKAGE和收据。

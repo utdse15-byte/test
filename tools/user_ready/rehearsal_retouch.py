@@ -44,7 +44,7 @@ def main():
         browser=pw.chromium.launch(executable_path=shutil.which('chromium'),headless=True,args=['--no-sandbox'])
         ctx=browser.new_context(accept_downloads=True,viewport={'width':1240,'height':960})
         def fresh(text=html):
-            page=ctx.new_page();page.set_default_timeout(20000);page.on('pageerror',lambda e:errors.append(str(e)));page.set_content(text,wait_until='load');return page
+            page=ctx.new_page();page.set_default_timeout(20000);page.on('pageerror',lambda e:errors.append(str(e)));page.set_content(text,wait_until='load');page.evaluate('window.ManjuExperience?.showAll({scroll:false})');return page
         page=fresh();page.locator('#prompt').fill('上方独立任务：保持原稿，不因图片精修而改写。')
         request_before=page.evaluate('ManjuWorkbench.getRequest()')
         page.locator('#director-shot').fill('精修示例_双时刻')
@@ -114,7 +114,7 @@ def main():
             'kit_sha256':digest(kit),'director_after_sha256':digest(final),'checkout_after_sha256':digest(checkout),
             'original_video_unchanged':True,'two_partial_returns':True,'idempotent_repeat':True,
             'native_target_size':[1920,1080],'target_bytes_unchanged':True,'unrelated_request_unchanged':True,
-            'legacy_r16_4_director_roundtrip_identical':True,'actual_browser_downloads':True,
+            'legacy_director_roundtrip_identical':True,'legacy_html_sha256':digest(args.legacy_html),'actual_browser_downloads':True,
             'isolated_document':True,'native_navigation':False,'windows_verified':False,
             'commercial_generation_executed':False,'kit_verification':report,'director_verification':final_report,'desk_verification':desk_report,
             'javascript_errors':errors}
