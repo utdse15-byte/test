@@ -1,5 +1,5 @@
-# Active State: Manju maintenance 0.2.0+r16.9
+# Active State: Manju maintenance 0.2.0+r16.10
 
-先完整阅读 `PROJECT_STATE_2026-09-13_11-33-44.md`。
+先完整阅读 `PROJECT_STATE_2026-09-13_17-53-56.md`。
 
-本轮补齐本地IDE接管和真实文件回程，故事独立舒展写作，原Desk与质量档保持。软件源码不是影片目录，未保存网页不是文件。最后交付只认实际PACKAGE与下载审计。
+本轮为可读故事差异与只读HTML报告，不是选择性接受或自动合并。原格式/质量/素材保持；最后交付仅认实际PACKAGE与下载审计。

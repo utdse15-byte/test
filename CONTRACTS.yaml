@@ -39,6 +39,15 @@ schemas:
     write_older: false
     notes: Local working-copy handoff. No automatic restore, generation, approval or live browser merge.
 
+  - id: manju.story-diff/v1
+    kind: schema
+    owner: manju.authoring.story_diff
+    status: experimental
+    latest_version: 1
+    read_older: true
+    write_older: false
+    notes: Read-only derived story comparison, stable entity IDs and exact old/new fields; not a merge or approval.
+
   - id: manju.ide-preview/v1
     kind: schema
     owner: manju.authoring.ide:PREVIEW

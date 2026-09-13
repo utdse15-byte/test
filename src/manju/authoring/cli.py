@@ -414,10 +414,10 @@ def ide_open_command(archive: Path, output: Path = typer.Option(..., '--output')
 
 
 @app.command('ide-preview')
-def ide_preview_command(workspace: Path):
+def ide_preview_command(workspace: Path, html: Path | None = typer.Option(None, '--html')):
     """只读检查 AI 工作副本，列出改变和过期简报，生成绑定本次内容的预览哈希。"""
     from .ide import preview_workspace
-    _ide_call(preview_workspace, workspace)
+    _ide_call(preview_workspace, workspace, html_output=html)
 
 
 @app.command('ide-return')

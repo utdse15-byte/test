@@ -44,7 +44,7 @@ async function readDesk(blob){
  const studio=await readStudio(entry.data);deskAssertForm(document);assertStudioRepresentable(studio.document);
  return {document,studio};
 }
-function deskClearRestore(){deskState.pending=null;$('desk-restore-preview').hidden=true;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;}
+function deskClearRestore(){window.ManjuStoryDiff?.clear('desk-story-diff');deskState.pending=null;$('desk-restore-preview').hidden=true;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;}
 function deskInstallBuffers(doc){
  storyInstall(doc.story||null);
  exchangeClearPreview();exchangeState.edit=clone(doc.external_edit);exchangeState.undo=null;exchangeState.lastReport=null;exchangeState.serial++;
@@ -63,10 +63,11 @@ async function deskPreview(blob,{source="file"}={}){
  const guard=deskGuard(),result=await readDesk(blob);require(activeUIOperations<=1&&guard===deskGuard(),'核验期间工作或待处理材料改变，旧结果未应用，请重新打开');
  deskClearRestore();deskState.pending={result,guard,source};const d=result.document,s=result.studio.document;
  $('desk-restore-summary').textContent=`将替换三个工作区和待处理材料，不是自动合并。\n镜头：${s.workspace.draft.form['shot-id']}\n原素材：${s.media.length} 个，${s.media.reduce((n,m)=>n+m.bytes,0)} 字节\n待处理外部改稿：${d.external_edit?Object.keys(d.external_edit.values).length+' 个字段':'无，恢复会清除当前缓冲'}\n已加载模板：${d.personal_template?.name||'无，恢复会清除当前模板'}\n故事工作本：${d.story?d.story.scenes.length+'场 / '+d.story.briefs.length+'份简报（包含作者资料）':'无；当前故事工作本会清除'}\n模板名称、说明和命名副本草稿：保留\n当前确认全部清除，质量优先开启；不自动接受外部修改或模板。`;
- $('desk-restore-preview').hidden=false;deskNotice('收工包核验完成。当前工作仍在，请查看恢复预览。');$('desk-restore-preview').scrollIntoView({block:'center'});
+ window.ManjuStoryDiff?.present('desk-story-diff',storyView(),d.story||null);
+ $('desk-restore-preview').hidden=false;deskNotice('收工包核验完成。当前工作仍在，请查看恢复预览。',false,'preview');$('desk-restore-preview').scrollIntoView({block:'center'});
 }
 function deskChanged(){
- if(deskState.pending&&deskState.pending.guard!==deskGuard()){deskState.pending=null;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;$('desk-restore-summary').textContent='预览后工作或待处理材料已变化，旧预览失效。请重新打开收工包；新内容没有被覆盖。';}
+ if(deskState.pending&&deskState.pending.guard!==deskGuard()){window.ManjuStoryDiff?.clear('desk-story-diff','对照已过期。当前工作未改变，请重新打开返回文件。');deskState.pending=null;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;$('desk-restore-summary').textContent='预览后工作或待处理材料已变化，旧预览失效。请重新打开收工包；新内容没有被覆盖。';}
  if(deskState.intake&&deskState.intake.guard!==deskGuard()){deskState.intake=null;$('intake-open').disabled=true;$('intake-confirmed').checked=false;intakeNotice('识别后工作已变化，请重新选择文件；未导入或覆盖新内容。');}
  if(deskState.verified&&deskNeedsSave())deskNotice('有未核验的新修改或待处理材料。此前收工包仍在，请重新保存并选回文件核验。',false,'dirty');
  $('desk-inventory').textContent=`当前：原素材 ${studioBindings().size} 个；故事 ${window.ManjuStory?.view()?.scenes.length||0} 场；待处理外部改稿 ${exchangeState.edit?'1 份':'无'}；已加载模板 ${flexState.template?'1 份':'无'}。`;

@@ -4637,3 +4637,9 @@ receipts remain mandatory; selected regression success is not Windows release pr
 ## IDE-AUTHORING-20260913
 
 Local AI works on saved immutable checkout baselines and editable story/text copies, not unsaved browser memory. Explicit preview hashes return a new candidate and never merge later browser drafts automatically. Source repository, film project and browser session are distinct objects. AGENTS/CLAUDE route to one policy; older IDE tasks are historical. Instructions are not an execution sandbox or proof of AI understanding. Story is a separate comfortable authoring view; original controls and protocols remain, and view changes do not mark creative edits.
+
+## READABLE-STORY-DIFF-20260913
+
+Read-only comparisons are derived from two validated Story/v1 snapshots and do not require a proposal or transaction schema. Stable IDs match entities; actual list positions describe order, not identity or authorship. Report literal before/after fields and unchanged fields without claiming semantic validation. Added scenes can shift positions without rewriting existing prose.
+
+IDE reports compare exported baseline versus disk candidate; browser restore/import compares current browser state versus pending file. These are different comparisons and must be labelled explicitly. Continued editing invalidates the preview; restore remains a whole-snapshot action. No selective acceptance, automatic merge or new approval route is introduced. An information toast must not cover a comparison already visible in its preview. A standalone --html report is script-free, read-only and exclusive-new, and is not a build input. Existing portable schemas, media bytes, quality policy and immutable history remain unchanged.

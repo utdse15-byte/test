@@ -100,6 +100,23 @@ body.ux-large .hint,body.ux-large .checkline{font-size:16px}
 #story-settings>summary{padding:2px 0;margin:0;font-size:14px;font-weight:600}#story-settings[open]>summary{margin-bottom:20px}
 .story-shell>.story-heading{padding-bottom:18px}.story-tabs{margin:22px 0}.story-empty-start{display:flex;gap:12px;margin-top:22px}
 #story-settings>.actions{margin-bottom:20px}
+/* Comparisons live in existing restore previews, not another navigation panel. */
+.story-diff{min-width:0;margin:18px 0;color:var(--ink,#20342c)}
+.story-diff summary{font-size:16px;line-height:1.6;padding:10px 0;cursor:pointer;overflow-wrap:anywhere}
+.story-diff>details>summary{font-weight:700;font-size:18px}
+.story-diff p{overflow-wrap:anywhere}.story-diff .diff-meta{font-size:14px;line-height:1.65;color:#536259}
+.story-diff .diff-facts{padding:12px 16px;background:#eef4e9;border:1px solid #c8d9bf;border-radius:8px;line-height:1.65}
+.story-diff .diff-warning{border-left:3px solid #9a512e;padding-left:12px;font-weight:600}
+.story-diff .diff-group{margin-top:24px}.story-diff .diff-entry{padding:20px;margin:12px 0 22px;background:var(--paper,#fff);border:1px solid var(--line,#ccd6ca);border-radius:12px;min-width:0}
+.story-diff h3{font-size:20px}.story-diff h4{margin:0;font-size:18px}.story-diff h5{margin:0 0 10px;font-size:14px}
+.story-diff .diff-unchanged{font-size:14px;line-height:1.65;color:#536259}
+.story-diff .diff-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin:12px 0}
+.story-diff .diff-pair>section{min-width:0;padding:16px;border:1px solid #d0d9cb;border-radius:9px}
+.story-diff .diff-after{background:#edf5e9}.story-diff .diff-before{background:#faf9f4}
+.story-diff pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:400px;overflow:auto;font:inherit;font-size:16px;line-height:1.85;margin:0;background:transparent;border:0;padding:0;border-radius:0}
+.story-diff pre:focus-visible,.story-diff summary:focus-visible{outline:3px solid #365942;outline-offset:4px}
+.story-diff .diff-field{margin:6px 0}.story-diff .diff-field>summary{font-size:15px;font-weight:600}
+@media(max-width:820px){.story-diff .diff-pair{grid-template-columns:minmax(0,1fr);gap:10px}.story-diff .diff-entry{padding:14px}.story-diff .diff-pair>section{padding:12px}.story-diff h3{font-size:18px}.story-diff h4{font-size:17px}}
 </style>
 </head>
 <body>
@@ -117,7 +134,7 @@ body.ux-large .hint,body.ux-large .checkline{font-size:16px}
   <a href="#exchange-section" data-view="exchange"><span class="ux-nav-icon" aria-hidden="true">⇄</span><span>外部协作<small>带出去 · 带回来</small></span></a>
   <a href="#flex-section" data-view="flex"><span class="ux-nav-icon" aria-hidden="true">⊞</span><span>组合与模板<small>复用做对的部分</small></span></a>
  </nav>
- <div class="ux-sidebar-bottom"><button id="ux-show-all" type="button" aria-pressed="false">完整长页视图</button><p>文件留在本地<br>不自动生成、选片或付款</p><span class="ux-build">0.2.0+r16.9</span></div>
+ <div class="ux-sidebar-bottom"><button id="ux-show-all" type="button" aria-pressed="false">完整长页视图</button><p>文件留在本地<br>不自动生成、选片或付款</p><span class="ux-build">0.2.0+r16.10</span></div>
 </aside>
 <header id="ux-topbar">
  <div class="ux-breadcrumb"><span>创作间</span><span aria-hidden="true">/</span><strong id="ux-current">开始与保存</strong></div>
@@ -143,7 +160,7 @@ body.ux-large .hint,body.ux-large .checkline{font-size:16px}
 
 <main>
 <section class="panel" id="studio-home">
- <div class="brandline"><div><span class="tag good">0.2.0+r16.9 · 可外部往返的个人创作台</span><h2>打开材料，继续创作，收工带走。</h2></div><span class="tag">离线 · 人工确认</span></div>
+ <div class="brandline"><div><span class="tag good">0.2.0+r16.10 · 可外部往返的个人创作台</span><h2>打开材料，继续创作，收工带走。</h2></div><span class="tag">离线 · 人工确认</span></div>
  <p class="hint"><a href="#flex-section">自由组合与个人模板</a> · 沿用你的质量优先规则，不自动选型、生成或付款。现在可把镜头与审片、局部返工、导演材料一起存成一个总备份；原有单区 ZIP 继续可用。</p>
  <p><a href="#exchange-section">外部工具往返：带走原素材，逐字段带回文字修改 →</a></p>
  <div id="desk-hub" class="desk-hub">
@@ -166,7 +183,7 @@ body.ux-large .hint,body.ux-large .checkline{font-size:16px}
  </div>
 </div>
 <div id="desk-restore-preview" class="warningbox" hidden>
- <h3>收工包已核验，尚未替换当前工作</h3><pre id="desk-restore-summary"></pre>
+ <h3>收工包已核验，尚未替换当前工作</h3><div id="desk-story-diff"></div><details><summary>全部恢复范围 · 不仅是故事</summary><pre id="desk-restore-summary"></pre></details>
  <label class="checkline"><input id="desk-restore-confirmed" type="checkbox"><span>当前三个区和待处理材料将替换为包内内容；我已保存现有工作，确认恢复。</span></label>
  <div class="actions"><button id="desk-restore-apply" disabled>恢复工作和待处理材料</button><button id="desk-restore-cancel">取消恢复</button></div>
 </div>
@@ -228,7 +245,7 @@ body.ux-large .hint,body.ux-large .checkline{font-size:16px}
 <section id="story-section" class="panel story-shell">
  <div class="story-heading"><div><p class="story-kicker">STORY → PRODUCTION</p><h2>故事工作本</h2><p class="hint">从一场开始就好。人物、前情与历史版本都在这里，不会自动改写。</p></div><span id="story-count" class="tag">可选，不改变原有工作方式</span></div>
  <div class="story-empty-start"><button id="story-create" type="button">建立故事工作本</button><button id="story-open-shortcut" type="button">打开已有故事</button></div>
- <div id="story-import-preview" class="warningbox" hidden><p id="story-import-summary"></p><label class="checkline"><input id="story-import-confirmed" type="checkbox">明确替换故事工作本，镜头和原素材保持</label><div class="actions"><button id="story-import-apply" disabled>确认替换工作本</button><button id="story-import-cancel">取消</button></div></div>
+ <div id="story-import-preview" class="warningbox" hidden><p id="story-import-summary"></p><div id="story-import-diff"></div><label class="checkline"><input id="story-import-confirmed" type="checkbox">明确替换故事工作本，镜头和原素材保持</label><div class="actions"><button id="story-import-apply" disabled>确认替换工作本</button><button id="story-import-cancel">取消</button></div></div>
  <div id="story-editor" hidden>
  <details id="story-settings" data-ux-disclosure><summary>作品设置与文件 · 名称、形态、导入导出</summary>
  <div class="actions"><label class="filebtn" for="story-file">打开故事 JSON<input id="story-file" class="hidden" type="file" accept=".json"></label><button id="story-export" type="button" disabled>导出完整故事 JSON</button><button id="story-unlink" type="button" disabled>解除当前镜头的故事关联</button></div>
@@ -458,7 +475,7 @@ body.ux-large .hint,body.ux-large .checkline{font-size:16px}
 </style>
 
 <details class="panel"><summary>使用与保存说明</summary><p>本页面不依赖服务器或第三方脚本。草稿尝试保存在当前浏览器的本地存储中，但浏览器清理、隐私模式或 file:// 限制都可能让它失效；请把 JSON 或 ZIP 导出到自己的磁盘。恢复草稿不会恢复媒体字节，必须重新绑定文件。</p><p>从已有工程导入：<code>manju models from-shot 项目目录 镜头编号 --output shot-import.json</code>，然后在这里“导入任务 / 镜头”。原项目不被修改。</p><p>新适配包是独立伴随文件，不向旧 R2 provider-handoff 插入内容。它不生成视频，不连接商用接口，不改动原影片的选片或锁片状态。</p><p>JSON 数据只按文本显示；能力来源网址仅作证据记录，不由本页面自动访问。</p></details>
-<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">0.2.0+r16.9 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
+<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">0.2.0+r16.10 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
 </main>
 <script id="builtin-quality" type="application/json">{
   "schema_id": "manju.quality-shortlist/v1",
@@ -4240,7 +4257,7 @@ function storyCurrent(){return storyState.doc?.scenes.find(s=>s.id===storyState.
 function storySelectedSource(){return storyState.doc?.sources.find(s=>s.id===storyState.sourceId)||null;}
 function storyNotice(text,error=false){$('story-status').textContent=text;$('story-status').classList.toggle('error',error);}
 function storySafety(){if(storyState.doc?.link){const b=storyState.doc.briefs.find(x=>x.id===storyState.doc.link.brief_id);if(b&&storyBriefStatus(storyState.doc,b).status!=='current'){invalidate();storyNotice('已关联简报的上游内容或场序改变。旧文件保留，请复核并建立新版本；没有自动重生成。',true);}}}
-function storyChanged(){storyState.pending=null;storyState.linkPending=null;$('story-import-preview').hidden=true;$('story-link-preview').hidden=true;$('story-link-confirmed').checked=false;$('story-import-confirmed').checked=false;storySafety();window.ManjuDesk?.changed();$('story-unlink').disabled=!storyState.doc?.link;storyUpdateBadges();}
+function storyChanged(){window.ManjuStoryDiff?.clear('story-import-diff');storyState.pending=null;storyState.linkPending=null;$('story-import-preview').hidden=true;$('story-link-preview').hidden=true;$('story-link-confirmed').checked=false;$('story-import-confirmed').checked=false;storySafety();window.ManjuDesk?.changed();$('story-unlink').disabled=!storyState.doc?.link;storyUpdateBadges();}
 function storyUpdateBadges(){const d=storyState.doc;$('story-count').textContent=d?`${d.scenes.length} 场 · ${d.sources.length} 份依据 · ${d.briefs.filter(b=>storyBriefStatus(d,b).status!=='current').length} 份待复核`:'可选，不改变原有工作方式';}
 function storyTab(tab){storyState.tab=tab;for(const x of ['scenes','sources','briefs']){$('story-tab-'+x).hidden=x!==tab;document.querySelector(`[data-story-tab="${x}"]`).setAttribute('aria-pressed',String(x===tab));}if(tab==='briefs')storyRenderBriefs();}
 function storyOptions(select,items,value,blank='未指定'){select.replaceChildren();if(blank!==null){const o=element('option',blank);o.value='';select.append(o);}for(const[id,label]of items){const o=element('option',label);o.value=id;select.append(o);}select.value=value||'';}
@@ -4283,12 +4300,102 @@ $('story-link-cancel').addEventListener('click',()=>{storyState.linkPending=null
 $('story-link-apply').addEventListener('click',storyHandler(()=>{const p=storyState.linkPending;require(p&&$('story-link-confirmed').checked&&p.guard===deskGuard(),'请重新预览并确认；旧预览不能覆盖新输入');const b=storyState.doc.briefs.find(x=>x.id===p.briefId);require(b&&storyBriefStatus(storyState.doc,b).status==='current','简报已过时');$('shot-id').value=b.scene_id;$('prompt').value=p.prompt;state.stage='draft';state.draftHash=null;invalidate();storyState.doc.link={brief_id:b.id,shot_id:b.scene_id,prompt_sha256:storyDigest(p.prompt)};storyChanged();storyNotice('已明确带入并关联。旧批准已清除，质量优先开启；继续按具体型号核对。');$('quality-only').checked=true;window.ManjuExperience?.reveal('prompt',{focus:true});}));
 $('story-unlink').addEventListener('click',()=>{if(!storyState.doc?.link)return;if(!confirm('解除故事版本关联？镜头文字仍保留，但此后不再阻止它沿用过期故事依据。'))return;storyState.doc.link=null;invalidate();storyChanged();storyNotice('已解除显式关联。镜头文字保留，没有重新批准。');});
 $('story-export').addEventListener('click',storyHandler(()=>{const d=storyNormalize(storyState.doc);download(new Blob([jsonBytes(d)],{type:'application/json'}),'STORY_'+d.project_id+'.json');storyNotice('已发起完整故事JSON下载，包含未完成文字、旧简报和复盘；不含媒体原文件。');}));
-$('story-file').addEventListener('change',storyHandler(async e=>{try{const f=e.target.files[0];if(!f)return;require(f.size<=2*1024*1024,'故事JSON不得超过2MiB');const guard=deskGuard(),doc=storyNormalize(strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(await f.arrayBuffer())));require(guard===deskGuard(),'读取期间工作已变，未覆盖新内容');storyState.pending={doc,guard};$('story-import-summary').textContent=`将替换故事工作本：${doc.title||'未命名'}，${doc.scenes.length} 场，${doc.sources.length} 项依据，${doc.briefs.length} 份简报。当前镜头与原素材不变；关联确认清除。请先保存需要保留的旧工作。`;$('story-import-confirmed').checked=false;$('story-import-apply').disabled=true;$('story-import-preview').hidden=false;}finally{e.target.value='';}}));
+$('story-file').addEventListener('change',storyHandler(async e=>{try{const f=e.target.files[0];if(!f)return;storyState.pending=null;$('story-import-preview').hidden=true;window.ManjuStoryDiff?.clear('story-import-diff');require(f.size<=2*1024*1024,'故事JSON不得超过2MiB');const guard=deskGuard(),doc=storyNormalize(strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(await f.arrayBuffer())));require(guard===deskGuard(),'读取期间工作已变，未覆盖新内容');window.ManjuStoryDiff?.present('story-import-diff',storyView(),doc);storyState.pending={doc,guard};$('story-import-summary').textContent=`将替换故事工作本：${doc.title||'未命名'}，${doc.scenes.length} 场，${doc.sources.length} 项依据，${doc.briefs.length} 份简报。当前镜头与原素材不变；关联确认清除。请先保存需要保留的旧工作。`;$('story-import-confirmed').checked=false;$('story-import-apply').disabled=true;$('story-import-preview').hidden=false;}finally{e.target.value='';}}));
 $('story-import-confirmed').addEventListener('change',()=>{$('story-import-apply').disabled=!storyState.pending||!$('story-import-confirmed').checked;});
 $('story-import-apply').addEventListener('click',storyHandler(()=>{const p=storyState.pending;require(p&&$('story-import-confirmed').checked&&p.guard===deskGuard(),'导入预览已变，请重新打开');const doc=clone(p.doc);doc.link=null;storyInstall(doc);invalidate();storyChanged();storyNotice('故事已恢复；当前镜头未替换，需重新明确关联。');}));
 $('story-import-cancel').addEventListener('click',()=>{storyState.pending=null;$('story-import-preview').hidden=true;});
-for(const type of ['input','change'])document.addEventListener(type,e=>{if(e.target.closest('#story-link-preview,#story-import-preview'))return;queueMicrotask(()=>{if(storyState.pending&&storyState.pending.guard!==deskGuard()){storyState.pending=null;$('story-import-apply').disabled=true;$('story-import-summary').textContent='预览后内容已变。未覆盖新输入，请重新打开。';}if(storyState.linkPending&&storyState.linkPending.guard!==deskGuard()){storyState.linkPending=null;$('story-link-apply').disabled=true;storyNotice('带入预览已过时，未覆盖新输入。',true);}});});
+for(const type of ['input','change'])document.addEventListener(type,e=>{if(e.target.closest('#story-link-preview,#story-import-preview'))return;queueMicrotask(()=>{if(storyState.pending&&storyState.pending.guard!==deskGuard()){window.ManjuStoryDiff?.clear('story-import-diff','对照已过期，请重新打开。');storyState.pending=null;$('story-import-apply').disabled=true;$('story-import-summary').textContent='预览后内容已变。未覆盖新输入，请重新打开。';}if(storyState.linkPending&&storyState.linkPending.guard!==deskGuard()){storyState.linkPending=null;$('story-link-apply').disabled=true;storyNotice('带入预览已过时，未覆盖新输入。',true);}});});
 window.ManjuStory={view:storyView,install:storyInstall,normalize:storyNormalize,compile:storyCompile,status:storyBriefStatus,prompt:storyPrompt,digest:storyDigest,assertRequest:storyAssertRequest,render:storyRender,state:storyState};
+
+// Derived read-only story comparison. No acceptance, storage or approval state.
+const STORY_DIFF_FIELDS={"story": {"title": "作品名称", "form": "作品形态", "intent": "作品意图", "ending": "作者结局字段", "link": "镜头关联"}, "scenes": {"episode": "分集", "title": "场景名称", "purpose": "这一场的作用", "action": "实际动作与因果", "dialogue": "对白", "before": "入场状态", "after": "离场变化", "source_ids": "引用依据", "references": "参考素材职责", "policy": "前情与知情范围"}, "sources": {"kind": "依据类型", "name": "名称", "text": "人物 / 依据正文", "scope": "可见范围", "from_scene_id": "起始场景", "knower_id": "知情人物", "provenance": "来源说明"}, "briefs": {"scene_id": "关联场景", "content": "已记录的制作内容", "content_sha256": "制作内容校验值", "observation": "实际成片复盘"}};
+const STORY_DIFF_NOTES=["只比较这两份故事的字面内容与结构，不做剧情语义、画质或创作批准。", "结局字段未改，不等于其他改动不会影响结局；需连贯阅读人物动机和因果。", "编号识别对象，位置表示当时的实际场序；新增一场造成的位置后移不等于重写。", "包含作者计划与历史正文，分享前检查范围；报告不是素材备份或自动合并指令。"];
+function storyDiffChanges(a,b,fields){
+ const rows=[];
+ for(const [field,label] of Object.entries(fields)){
+  const av=a===null?null:a[field],bv=b===null?null:b[field];
+  if((a===null)!==(b===null)||canonical(av)!==canonical(bv))rows.push({field,label,before:av,after:bv,before_present:a!==null,after_present:b!==null});
+ }
+ return rows;
+}
+function storyDiffEntities(before,after,kind){
+ const left=before?.[kind]||[],right=after?.[kind]||[],a=new Map(left.map(x=>[x.id,x])),b=new Map(right.map(x=>[x.id,x]));
+ const ap=new Map(left.map((x,i)=>[x.id,i+1])),bp=new Map(right.map((x,i)=>[x.id,i+1]));
+ const rows=[],unchanged=[],sequence=[...right.map(x=>x.id),...left.filter(x=>!b.has(x.id)).map(x=>x.id)];
+ for(const id of sequence){
+  const old=a.get(id)||null,next=b.get(id)||null,changes=storyDiffChanges(old,next,STORY_DIFF_FIELDS[kind]),present=old!==null&&next!==null;
+  const status=old===null?'added':next===null?'removed':changes.length?'changed':'unchanged',shift=present&&ap.get(id)!==bp.get(id);
+  if(status==='unchanged')unchanged.push(id);
+  if(status==='unchanged'&&!(kind==='scenes'&&shift))continue;
+  const title=kind==='scenes'?'title':kind==='sources'?'name':'scene_id';
+  rows.push({id,status,title_before:old?.[title]??null,title_after:next?.[title]??null,before_position:ap.get(id)??null,after_position:bp.get(id)??null,position_changed:shift,changes,unchanged_fields:Object.keys(STORY_DIFF_FIELDS[kind]).filter(k=>present&&!changes.some(r=>r.field===k))});
+ }
+ const ao=left.map(x=>x.id),bo=right.map(x=>x.id);
+ return {rows,unchanged,order:{before:ao,after:bo,changed:canonical(ao)!==canonical(bo),shared_order_changed:canonical(ao.filter(x=>b.has(x)))!==canonical(bo.filter(x=>a.has(x)))}};
+}
+function compareStories(before,after){
+ const a=before===null?null:storyNormalize(before),b=after===null?null:storyNormalize(after);
+ const relationship=a===null&&b===null?'empty':a===null?'created':b===null?'removed':a.project_id===b.project_id?'same_project':'different_project';
+ const report={schema_id:'manju.story-diff/v1',before_sha256:storyDigest(a),after_sha256:storyDigest(b),before_project_id:a?.project_id??null,after_project_id:b?.project_id??null,before_title:a?.title??null,after_title:b?.title??null,relationship,changed:canonical(a)!==canonical(b),read_only:true,automatic_execution:false,semantic_validation:false,merges_later_browser_edits:false,notes:[...STORY_DIFF_NOTES],story_fields:[],scenes:[],sources:[],briefs:[],unchanged_scene_ids:[],orders:{},brief_status_changes:[],ending_field_unchanged:null,last_scene_content_unchanged:null,last_scene_id:null};
+ if(relationship==='different_project')return report;
+ report.story_fields=storyDiffChanges(a,b,STORY_DIFF_FIELDS.story);
+ for(const kind of ['scenes','sources','briefs']){const data=storyDiffEntities(a,b,kind);report[kind]=data.rows;report.orders[kind]=data.order;if(kind==='scenes')report.unchanged_scene_ids=data.unchanged;}
+ if(a!==null&&b!==null){
+  report.ending_field_unchanged=a.ending===b.ending;
+  if(a.scenes.length&&b.scenes.length&&a.scenes.at(-1).id===b.scenes.at(-1).id){report.last_scene_id=a.scenes.at(-1).id;report.last_scene_content_unchanged=canonical(a.scenes.at(-1))===canonical(b.scenes.at(-1));}
+  const previous=new Map(a.briefs.map(x=>[x.id,x]));
+  for(const brief of b.briefs){const old=previous.has(brief.id)?storyBriefStatus(a,previous.get(brief.id)):null,next=storyBriefStatus(b,brief);if(old===null||canonical(old)!==canonical(next))report.brief_status_changes.push({id:brief.id,scene_id:brief.scene_id,before:old,after:next});}
+ }
+ return report;
+}
+function storyDiffValue(value,present=true){if(!present)return '（本侧不存在）';if(value==='')return '（空白）';return typeof value==='string'?value:JSON.stringify(value,null,2);}
+function renderStoryDiff(container,report,labels={before:'当前页面',after:'待恢复版本'}){
+ container.replaceChildren();container.className='story-diff';
+ container.dataset.beforeHash=report.before_sha256;container.dataset.afterHash=report.after_sha256;
+ if(report.relationship==='empty')return;
+ if(report.relationship==='different_project'){
+  container.append(element('p','这是另一部作品，不按同名编号比较场景；恢复会替换当前故事。','diff-warning'));
+  container.append(element('p',`${report.before_title||'未命名'} [${report.before_project_id}] → ${report.after_title||'未命名'} [${report.after_project_id}]`,'diff-meta'));return;
+ }
+ const details=element('details'),summary=element('summary');details.open=report.relationship==='same_project'&&report.changed;
+ const content=report.scenes.filter(x=>x.status!=='unchanged'),parts=[];
+ if(report.relationship==='created')parts.push('新增故事');else if(report.relationship==='removed')parts.push('移除故事');
+ if(content.length)parts.push(`${content.length} 场内容变化`);
+ if(report.sources.length)parts.push(`${report.sources.length} 项人物 / 依据变化`);
+ if(report.story_fields.length)parts.push(`${report.story_fields.length} 项作品设置变化`);
+ if(report.briefs.length)parts.push(`${report.briefs.length} 项版本 / 复盘变化`);
+ if(report.orders.scenes.changed)parts.push('场序变化');
+ summary.textContent=report.changed?'故事对照 · '+(parts.join(' · ')||'排列变化'):'故事内容未变 · 查看核对范围';
+ details.append(summary);container.append(details);
+ const lead=element('p','当前页面 ↔ 待恢复版本；不代表原导出基线。只读，不自动合并。','diff-meta');details.append(lead);
+ const facts=[];
+ if(report.ending_field_unchanged!==null)facts.push(report.ending_field_unchanged?'作者结局字段未改':'作者结局字段有改动');
+ if(report.relationship==='same_project')facts.push(report.orders.scenes.changed?'场序有变化':'场序未改');
+
+ if(facts.length)details.append(element('p',facts.join(' · '),'diff-facts'));
+ details.append(element('p','字面未改不代表剧情因果未变，请连贯阅读。','diff-meta'));
+ function pair(row){
+  const grid=element('div',undefined,'diff-pair');
+  for(const[side,label]of [['before',labels.before],['after',labels.after]]){const box=element('section',undefined,'diff-'+side),head=element('h5',label),pre=element('pre',storyDiffValue(row[side],row[side+'_present']));pre.tabIndex=0;box.append(head,pre);grid.append(box);}return grid;
+ }
+ for(const row of report.story_fields){const article=element('article',undefined,'diff-entry');article.append(element('h4',row.label),pair(row));details.append(article);}
+ for(const[kind,title]of [['scenes','场景'],['sources','人物与依据'],['briefs','版本与复盘']]){
+  if(!report[kind].length)continue;const section=element('section',undefined,'diff-group');if(kind!=='scenes'||report[kind].length>1)section.append(element('h3',title));details.append(section);
+  for(const item of report[kind]){
+   const card=element('article',undefined,'diff-entry');card.dataset.storyId=item.id;
+   const tag={added:'新增',removed:'移除',changed:'内容有改动',unchanged:'内容未改，仅位置变化'}[item.status];
+   card.append(element('h4',item.title_after||item.title_before||'未命名'),element('p',`${kind==='scenes'?(item.before_position===item.after_position?`第 ${item.after_position} 场 · `:`第 ${item.before_position??'∅'} 位 → 第 ${item.after_position??'∅'} 位 · `):''}${item.id} · ${tag}`,'diff-meta'));
+   if(item.unchanged_fields.length){const kept=element('details',undefined,'diff-unchanged');kept.append(element('summary',`${item.unchanged_fields.length} 项未改`),element('p',item.unchanged_fields.map(k=>STORY_DIFF_FIELDS[kind][k]).join('、')));card.append(kept);}
+   for(const row of item.changes){const block=element('details',undefined,'diff-field');block.open=['action','dialogue','text'].includes(row.field);block.append(element('summary',row.label),pair(row));card.append(block);}section.append(card);
+  }
+ }
+ if(report.brief_status_changes.length){const section=element('details');section.append(element('summary',`${report.brief_status_changes.length} 份制作简报的复核状态变化（旧版未改写）`));for(const item of report.brief_status_changes)section.append(element('p',`${item.id} · ${item.scene_id}：${item.before?.status||'无旧记录'} → ${item.after.status}；${item.after.changes.join('、')}`,'diff-meta'));details.append(section);}
+ const audit=element('details');audit.append(element('summary','完整排列与未改场景编号'),element('pre',JSON.stringify({orders:report.orders,unchanged_scene_ids:report.unchanged_scene_ids,last_scene_id:report.last_scene_id,last_scene_content_unchanged:report.last_scene_content_unchanged},null,2)));details.append(audit);
+ details.append(element('p','报告可能含作者私密计划与旧正文。它不是素材备份，也不证明是谁或哪个模型做了修改。','diff-meta'));
+}
+function presentStoryDiff(id,before,after){const report=compareStories(before,after);renderStoryDiff($(id),report);return report;}
+function clearStoryDiff(id,message=''){const e=$(id);if(!e)return;e.replaceChildren();delete e.dataset.beforeHash;delete e.dataset.afterHash;if(message)e.append(element('p',message,'diff-warning'));}
+window.ManjuStoryDiff={compare:compareStories,render:renderStoryDiff,present:presentStoryDiff,clear:clearStoryDiff};
 
 // Daily work is a portable envelope around the unchanged Studio/v1 archive.
 // No browser persistence, remote calls, derived approvals or implicit writes.
@@ -4336,7 +4443,7 @@ async function readDesk(blob){
  const studio=await readStudio(entry.data);deskAssertForm(document);assertStudioRepresentable(studio.document);
  return {document,studio};
 }
-function deskClearRestore(){deskState.pending=null;$('desk-restore-preview').hidden=true;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;}
+function deskClearRestore(){window.ManjuStoryDiff?.clear('desk-story-diff');deskState.pending=null;$('desk-restore-preview').hidden=true;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;}
 function deskInstallBuffers(doc){
  storyInstall(doc.story||null);
  exchangeClearPreview();exchangeState.edit=clone(doc.external_edit);exchangeState.undo=null;exchangeState.lastReport=null;exchangeState.serial++;
@@ -4355,10 +4462,11 @@ async function deskPreview(blob,{source="file"}={}){
  const guard=deskGuard(),result=await readDesk(blob);require(activeUIOperations<=1&&guard===deskGuard(),'核验期间工作或待处理材料改变，旧结果未应用，请重新打开');
  deskClearRestore();deskState.pending={result,guard,source};const d=result.document,s=result.studio.document;
  $('desk-restore-summary').textContent=`将替换三个工作区和待处理材料，不是自动合并。\n镜头：${s.workspace.draft.form['shot-id']}\n原素材：${s.media.length} 个，${s.media.reduce((n,m)=>n+m.bytes,0)} 字节\n待处理外部改稿：${d.external_edit?Object.keys(d.external_edit.values).length+' 个字段':'无，恢复会清除当前缓冲'}\n已加载模板：${d.personal_template?.name||'无，恢复会清除当前模板'}\n故事工作本：${d.story?d.story.scenes.length+'场 / '+d.story.briefs.length+'份简报（包含作者资料）':'无；当前故事工作本会清除'}\n模板名称、说明和命名副本草稿：保留\n当前确认全部清除，质量优先开启；不自动接受外部修改或模板。`;
- $('desk-restore-preview').hidden=false;deskNotice('收工包核验完成。当前工作仍在，请查看恢复预览。');$('desk-restore-preview').scrollIntoView({block:'center'});
+ window.ManjuStoryDiff?.present('desk-story-diff',storyView(),d.story||null);
+ $('desk-restore-preview').hidden=false;deskNotice('收工包核验完成。当前工作仍在，请查看恢复预览。',false,'preview');$('desk-restore-preview').scrollIntoView({block:'center'});
 }
 function deskChanged(){
- if(deskState.pending&&deskState.pending.guard!==deskGuard()){deskState.pending=null;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;$('desk-restore-summary').textContent='预览后工作或待处理材料已变化，旧预览失效。请重新打开收工包；新内容没有被覆盖。';}
+ if(deskState.pending&&deskState.pending.guard!==deskGuard()){window.ManjuStoryDiff?.clear('desk-story-diff','对照已过期。当前工作未改变，请重新打开返回文件。');deskState.pending=null;$('desk-restore-confirmed').checked=false;$('desk-restore-apply').disabled=true;$('desk-restore-summary').textContent='预览后工作或待处理材料已变化，旧预览失效。请重新打开收工包；新内容没有被覆盖。';}
  if(deskState.intake&&deskState.intake.guard!==deskGuard()){deskState.intake=null;$('intake-open').disabled=true;$('intake-confirmed').checked=false;intakeNotice('识别后工作已变化，请重新选择文件；未导入或覆盖新内容。');}
  if(deskState.verified&&deskNeedsSave())deskNotice('有未核验的新修改或待处理材料。此前收工包仍在，请重新保存并选回文件核验。',false,'dirty');
  $('desk-inventory').textContent=`当前：原素材 ${studioBindings().size} 个；故事 ${window.ManjuStory?.view()?.scenes.length||0} 场；待处理外部改稿 ${exchangeState.edit?'1 份':'无'}；已加载模板 ${flexState.template?'1 份':'无'}。`;
@@ -4691,7 +4799,7 @@ window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPr
  for(const type of ['input','change','click'])document.addEventListener(type,scheduleSync);
  const observer=new MutationObserver(records=>{
   if(records.some(r=>r.target===status||status?.contains(r.target)))notify(status.textContent,status.classList.contains('error'));
-  if(records.some(r=>r.target===$('desk-save-status')||$('desk-save-status').contains(r.target))){if($('desk-save-status').dataset.noticeKind!=='dirty')notify($('desk-save-status').textContent,$('desk-save-status').classList.contains('reason'));scheduleSync();}
+  if(records.some(r=>r.target===$('desk-save-status')||$('desk-save-status').contains(r.target))){if($('desk-save-status').classList.contains('reason')||!['dirty','preview'].includes($('desk-save-status').dataset.noticeKind))notify($('desk-save-status').textContent,$('desk-save-status').classList.contains('reason'));scheduleSync();}
  });
  if(status)observer.observe(status,{childList:true,subtree:true,characterData:true});observer.observe($('desk-save-status'),{childList:true,subtree:true,characterData:true});
  // Unified intake can finish asynchronously. Surface its preview instead of hiding it.

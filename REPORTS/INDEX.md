@@ -132,3 +132,6 @@ reporting window stays visible; the era table keeps their record intact.
 
 | ide_ux/PROJECT_REVIEW.md | r16.9：通用AI接管、普通文件往返、故事独立与三步写作 | 无商业IDE自动化认证 |
 | ide_ux/VALIDATION.md | 新旧备份、实际CLI、浏览器、安装与下载的独立证据 | 选定范围非全项目 |
+
+| story_changes/PROJECT_REVIEW.md | r16.10：稳定ID故事对照、当前页面恢复预览、IDE只读HTML | 没有选择性接受或自动合并 |
+| story_changes/VALIDATION.md | 1084点同进程回归、真实素材/安装/旧版回程 | 下载与最终包另行核验，非全项目与Windows认证 |

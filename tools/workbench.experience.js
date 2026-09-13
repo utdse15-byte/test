@@ -100,7 +100,7 @@
  for(const type of ['input','change','click'])document.addEventListener(type,scheduleSync);
  const observer=new MutationObserver(records=>{
   if(records.some(r=>r.target===status||status?.contains(r.target)))notify(status.textContent,status.classList.contains('error'));
-  if(records.some(r=>r.target===$('desk-save-status')||$('desk-save-status').contains(r.target))){if($('desk-save-status').dataset.noticeKind!=='dirty')notify($('desk-save-status').textContent,$('desk-save-status').classList.contains('reason'));scheduleSync();}
+  if(records.some(r=>r.target===$('desk-save-status')||$('desk-save-status').contains(r.target))){if($('desk-save-status').classList.contains('reason')||!['dirty','preview'].includes($('desk-save-status').dataset.noticeKind))notify($('desk-save-status').textContent,$('desk-save-status').classList.contains('reason'));scheduleSync();}
  });
  if(status)observer.observe(status,{childList:true,subtree:true,characterData:true});observer.observe($('desk-save-status'),{childList:true,subtree:true,characterData:true});
  // Unified intake can finish asynchronously. Surface its preview instead of hiding it.

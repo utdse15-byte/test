@@ -47,7 +47,11 @@ python -m manju models ide-preview AI_WORK
 ```
 
 3. 让 AI 阅读 AI_WORK/AGENTS.md。修改 STORY.json 的人物、场景与关系；修改 EDIT.json 的 values 完成镜头、导演或返工文字调整。原元数据、旧简报和 REFERENCES 媒体不改。原始已有观察不重写，不能靠改记录伪造“看过”。
-4. 再执行 ide-preview，核对 changed_fields、story_changed、brief_status。使用**这次输出**的 preview_sha256：
+4. 再执行 `ide-preview AI_WORK --html CHANGES.html`，把实际创建的离线对照页交给用户。命令仍输出 JSON，新增 story_diff 含场景/人物/依据的原文与新版、未改字段、位置及复核状态。HTML文件名必须未占用，不联网、不自动接受。`changed_fields` 仍只表示镜头/导演/返工文字字段，不能用它为空推断故事没改；故事看 `story_diff`。
+
+报告比较导出基线与磁盘候选，不是后来网页新稿。恢复时页面另比当前网页与返回文件，仍然是整包恢复，不是逐场采纳或自动三方合并。结局字段不变只是字面比较，不等于剧情因果未变。报告可能包含作者私密资料，不自动发给外部服务。
+
+核对 story_diff、changed_fields、story_changed、brief_status。使用**这次输出**的 preview_sha256：
 
 ```text
 python -m manju models ide-return AI_WORK --expected-preview HASH --output RETURNED_CHECKOUT.zip
