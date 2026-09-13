@@ -394,3 +394,35 @@ def story_kit_verify_command(archive: Path):
     """只读核验简报与原参考字节，不代表当前依赖、语义、画质或模型身份认证。"""
     from .story import verify_brief_kit
     _emit(verify_brief_kit(archive))
+
+
+def _ide_call(function, *args, **kwargs):
+    """IDE tools use structured errors; existing command error contracts stay intact."""
+    try:
+        _emit(function(*args, **kwargs))
+    except (AuthoringError, ValidationError, ValueError, OSError) as exc:
+        _emit({'ok': False, 'error': str(exc), 'code': 'ide_handoff_invalid',
+               'automatic_execution': False})
+        raise typer.Exit(2) from exc
+
+
+@app.command('ide-open')
+def ide_open_command(archive: Path, output: Path = typer.Option(..., '--output')):
+    """将已保存的收工包转成新的 IDE 可编辑工作目录。原包不改，不执行素材。"""
+    from .ide import open_workspace
+    _ide_call(open_workspace, archive, output)
+
+
+@app.command('ide-preview')
+def ide_preview_command(workspace: Path):
+    """只读检查 AI 工作副本，列出改变和过期简报，生成绑定本次内容的预览哈希。"""
+    from .ide import preview_workspace
+    _ide_call(preview_workspace, workspace)
+
+
+@app.command('ide-return')
+def ide_return_command(workspace: Path, output: Path = typer.Option(..., '--output'),
+                       expected_preview: str = typer.Option(..., '--expected-preview')):
+    """明确以刚才预览创建新收工候选包；不自动恢复，不覆盖原包或后来浏览器稿。"""
+    from .ide import return_workspace
+    _ide_call(return_workspace, workspace, output, expected_preview=expected_preview)

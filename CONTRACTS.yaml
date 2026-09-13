@@ -30,6 +30,24 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  - id: manju.ide-workspace/v1
+    kind: schema
+    owner: manju.authoring.ide:SCHEMA
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Local working-copy handoff. No automatic restore, generation, approval or live browser merge.
+
+  - id: manju.ide-preview/v1
+    kind: schema
+    owner: manju.authoring.ide:PREVIEW
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Local working-copy handoff. No automatic restore, generation, approval or live browser merge.
+
   - id: manju.story-notebook/v1
     kind: schema
     owner: manju.authoring.story:Story

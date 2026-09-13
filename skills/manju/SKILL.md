@@ -19,7 +19,7 @@ user_invocable: false
 
 ```text
 manju status --json
-manju events --tail 30
+manju events -n 30 --json
 manju production status --json
 ```
 

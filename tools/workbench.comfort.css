@@ -1,0 +1,54 @@
+/* Comfortable authoring layout: less simultaneous work, not smaller text. */
+:root{--ux-side:240px;--ux-reading:16px}
+body{font-size:16px;line-height:1.8;background:#f4f5f1}
+main{padding:42px 48px 96px;max-width:none}
+.ux-page-heading{margin-bottom:30px}.ux-page-heading h1{font-size:clamp(27px,2.5vw,36px);line-height:1.35}
+.ux-page-heading p:last-child{font-size:15px;max-width:68ch;line-height:1.8}
+.panel{padding:32px;border-radius:18px;margin-bottom:28px;box-shadow:0 3px 18px #18302205}
+.panel h2{font-size:23px;margin-bottom:20px}.panel h3{font-size:19px}
+.hint,.checkline{font-size:14px;line-height:1.85}.small{font-size:13px}
+label.field{margin-bottom:26px;font-size:16px;font-weight:600}
+input,textarea,select{font-size:16px;padding:13px 15px;line-height:1.75;border-radius:10px;margin-top:8px}
+textarea{min-height:142px}#prompt{min-height:248px;font-size:17px;line-height:1.95}
+button,.filebtn{font-size:15px;min-height:46px;padding:11px 17px}
+.formrow{gap:24px}.actions{gap:12px;row-gap:14px;margin-top:20px}
+#ux-shot.grid{grid-template-columns:minmax(0,1fr);max-width:1020px;margin-inline:auto}
+#ux-shot-tools{max-width:1020px;margin-inline:auto;padding-bottom:14px}
+#ux-navigation a{padding:13px 12px;font-size:15px;min-height:58px}
+#ux-navigation a small{font-size:12px;line-height:1.7}#ux-sidebar{padding:26px 20px}
+.ux-sidebar-bottom{margin-top:18px}#ux-topbar{padding-inline:34px}.ux-top-actions button{min-height:42px}
+#studio-home .desk-hub{gap:26px}#studio-home .desk-hub>div{padding:28px;border-radius:18px}
+#studio-home .desk-hub p{font-size:15px;line-height:1.85}.studio-routes{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.studio-routes a{padding:24px;min-height:130px}.studio-routes strong{font-size:17px}.studio-routes span{font-size:13px;line-height:1.8}
+.comfort-ide{padding:22px 26px;border:1px solid var(--line);border-radius:14px;background:#fff;margin:24px 0}
+.comfort-ide summary{font-size:16px}.comfort-ide-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;margin:22px 0}
+.comfort-ide p{font-size:14px;line-height:1.9}.comfort-ide code{font-size:13px}
+#story-section .story-heading{padding-bottom:18px;border-bottom:1px solid var(--line)}
+#story-section>.actions{margin:24px 0}.story-route{font-size:14px;padding:16px 20px}
+.story-tabs{gap:12px;border-bottom:1px solid var(--line);padding-bottom:18px;margin:30px 0}
+.story-tabs button{min-height:48px;font-size:16px;padding:12px 21px}
+.story-layout{grid-template-columns:210px minmax(0,1fr);gap:34px}.story-layout aside{padding-right:22px}
+.story-list{gap:10px}.story-list button{padding:15px 12px;line-height:1.75;min-height:60px}
+.story-list button small{display:block;font-size:12px}.story-picks{max-height:none;padding:14px 0}
+.comfort-steps{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 0 18px;margin-bottom:26px}
+.comfort-steps button{font-size:14px;padding:10px 13px;min-height:44px;background:transparent;border-color:transparent;border-radius:8px;color:#566d5d}
+.comfort-steps button[aria-selected=true]{background:#e6f0e7;border-color:#c1d6c5;color:#164b32;font-weight:750}
+.comfort-hidden{display:none!important}.comfort-next{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-top:20px;margin-top:20px;border-top:1px solid var(--line)}
+.comfort-next span{font-size:13px;color:var(--muted)}
+#story-purpose{min-height:105px}#story-action{min-height:210px}#story-dialogue{min-height:160px}#story-source-text{min-height:240px}
+#story-scene-editor>.actions{margin-top:0}.story-shell details>summary{font-size:15px;padding:10px 0}
+.story-context{padding:26px;margin-top:0}.story-brief{padding:26px;margin-top:24px}
+body.ux-all .comfort-steps{display:none}body.ux-all .comfort-next{display:none}
+body.ux-large label.field,body.ux-large input,body.ux-large textarea,body.ux-large select{font-size:18px}
+body.ux-large .hint,body.ux-large .checkline{font-size:16px}
+@media(min-width:1700px){main{max-width:1440px;margin-inline:auto;margin-left:calc(var(--ux-side) + (100vw - 1680px)/2);margin-right:calc((100vw - 1680px)/2)}}
+@media(max-width:1200px){main{padding:32px 28px 90px}.panel{padding:26px}.story-layout{grid-template-columns:170px minmax(0,1fr);gap:24px}.comfort-steps{gap:4px}.comfort-steps button{padding:10px 8px;font-size:13px}.studio-routes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:960px){.story-layout{grid-template-columns:minmax(0,1fr)}.story-layout aside{border-right:0;border-bottom:1px solid var(--line);padding:0 0 20px}.story-list{flex-direction:row;max-height:140px;overflow:auto}.story-list button{min-width:156px;width:auto;flex-shrink:0}.comfort-ide-grid{grid-template-columns:1fr;gap:10px}#ux-topbar{padding-inline:18px}.ux-top-actions kbd{display:none}}
+@media(max-width:760px){:root{--ux-side:0px}main{padding:28px 18px 96px}.panel{padding:22px 18px;border-radius:14px}.panel h2{font-size:21px}.ux-page-heading p:last-child{font-size:14px}.ux-page-heading h1{font-size:28px}#ux-sidebar{padding:8px 12px}#ux-navigation a{min-height:40px;font-size:14px;padding:8px 12px}.ux-top-actions button{min-height:40px}#studio-home .desk-hub>div{padding:24px}.studio-routes a{padding:21px;min-height:120px}.studio-routes strong{font-size:16px}.studio-routes span{font-size:13px}label.field{margin-bottom:24px}input,textarea,select{font-size:16px}.story-tabs{gap:6px}.story-tabs button{flex:1;min-width:80px;font-size:14px;padding:10px 8px}.comfort-steps button{font-size:13px;padding:10px 6px;flex:1;min-width:80px}.story-context,.story-brief{padding:20px 16px}.comfort-ide{padding:20px}.formrow{grid-template-columns:1fr}.comfort-next button{flex:1}#ux-shot-tools{max-width:100%}#ux-save-strip{font-size:12px;padding:12px 16px}.story-heading .tag{font-size:12px}}
+@media(max-width:390px){main{padding:24px 14px 94px}.panel{padding:20px 16px}.studio-routes{grid-template-columns:1fr}.comfort-steps button{font-size:12px;padding:9px 4px}.actions button{min-width:100px}}
+@media print{.comfort-hidden{display:block!important}.comfort-steps,.comfort-next{display:none}}
+.story-heading .story-kicker{display:none}.story-heading .hint{margin-bottom:0}.story-heading h2{margin-bottom:4px}
+#story-settings{margin:16px 0 24px;padding:12px 18px;background:#f7f9f5;border-radius:10px;border:1px solid var(--line)}
+#story-settings>summary{padding:2px 0;margin:0;font-size:14px;font-weight:600}#story-settings[open]>summary{margin-bottom:20px}
+.story-shell>.story-heading{padding-bottom:18px}.story-tabs{margin:22px 0}.story-empty-start{display:flex;gap:12px;margin-top:22px}
+#story-settings>.actions{margin-bottom:20px}

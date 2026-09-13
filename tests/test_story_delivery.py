@@ -55,4 +55,4 @@ def test_rejects_invalid_publish_gate(files,case):
 
 def test_original_entry_uses_current_version_and_explains_old_inner():
     text=(REPO/'tools/user_ready/START_HERE.html').read_text(encoding='utf-8')
-    assert '0.2.0+r16.8' in text and 'STORY_CHECKOUT.zip' in text and 'STUDIO.zip' in text
+    assert json.loads((REPO/'DELIVERY_VERSION.json').read_text(encoding='utf-8'))['version'] in text and 'STORY_CHECKOUT.zip' in text and 'STUDIO.zip' in text

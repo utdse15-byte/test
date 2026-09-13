@@ -46,8 +46,8 @@ script=script.replace('// DESK_SCRIPT',(root/'tools/workbench.desk.js').read_tex
 template=template.replace('<!-- RELINK_SECTION -->',(root/'tools/workbench.relink.html').read_text(encoding='utf-8'))
 script=script.replace('// RELINK_SCRIPT',(root/'tools/workbench.relink.js').read_text(encoding='utf-8'))
 template=template.replace('<!-- EXPERIENCE_SHELL -->',(root/'tools/workbench.experience.html').read_text(encoding='utf-8')+(root/'tools/workbench.inspection.html').read_text(encoding='utf-8'))
-template=template.replace('/* EXPERIENCE_STYLE */',(root/'tools/workbench.experience.css').read_text(encoding='utf-8')+(root/'tools/workbench.inspection.css').read_text(encoding='utf-8')+(root/'tools/workbench.story.css').read_text(encoding='utf-8'))
-experience=(root/'tools/workbench.experience.js').read_text(encoding='utf-8')+'\n'+(root/'tools/workbench.inspection.js').read_text(encoding='utf-8')
+template=template.replace('/* EXPERIENCE_STYLE */',(root/'tools/workbench.experience.css').read_text(encoding='utf-8')+(root/'tools/workbench.inspection.css').read_text(encoding='utf-8')+(root/'tools/workbench.story.css').read_text(encoding='utf-8')+(root/'tools/workbench.comfort.css').read_text(encoding='utf-8'))
+experience=(root/'tools/workbench.experience.js').read_text(encoding='utf-8')+'\n'+(root/'tools/workbench.inspection.js').read_text(encoding='utf-8')+'\n'+(root/'tools/workbench.comfort.js').read_text(encoding='utf-8')
 template=template.replace('__EXPERIENCE_SCRIPT__',experience.replace('</script','<\\/script'))
 # Do not allow JSON strings or program string literals to close a script tag.
 html=template.replace('__CATALOG__',catalog.replace('</','<\\/')).replace('__SCRIPT__',script.replace('</script','<\\/script')).replace('__RELEASE__',release).replace('__QUALITY__',quality.replace('</','<\\/'))

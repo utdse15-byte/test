@@ -46,6 +46,60 @@ main{max-width:1540px;padding:30px 36px 78px;margin:0 0 0 var(--ux-side)}main>se
 @media(max-width:760px){#ux-image-dialog{padding:13px;gap:10px;max-width:calc(100vw - 16px);height:calc(100dvh - 16px);max-height:calc(100dvh - 16px);border-radius:12px}.ux-image-head h2{font-size:17px}.ux-image-head>button{font-size:12px;padding:8px}.ux-image-tools{justify-content:center}.ux-image-tools>div{justify-content:center}.ux-image-tools button{min-height:40px;padding:7px 9px}.ux-image-head p{font-size:11px}#ux-image-help{font-size:11px}}
 @media(max-height:480px){#ux-image-dialog{padding:10px;gap:5px}.ux-image-head h2{font-size:15px}#ux-image-help{font-size:10px;line-height:1.4}.ux-image-tools button{min-height:30px;padding:4px 9px}}
 .story-heading{display:flex;justify-content:space-between;gap:16px;align-items:start}.story-kicker{font-size:11px;letter-spacing:.16em;color:var(--accent);font-weight:750;margin:0 0 8px}.story-shell h2{margin-bottom:8px}.story-route{padding:12px 16px;border-left:3px solid var(--accent);background:var(--soft);border-radius:4px}.story-tabs{display:flex;gap:8px;margin:24px 0 18px;flex-wrap:wrap}#story-section .story-tabs button[aria-pressed=true],#story-section .story-tabs button[aria-pressed=true]:not(:disabled):hover{background:var(--accent);color:white}.story-layout{display:grid;grid-template-columns:220px minmax(0,1fr);gap:24px}.story-layout>*{min-width:0}.story-layout aside{border-right:1px solid var(--line);padding-right:16px}.story-list{display:flex;flex-direction:column;gap:8px;margin-top:12px;max-height:520px;overflow:auto;padding:3px}.story-list button{text-align:left;display:block;white-space:normal;overflow-wrap:anywhere;width:100%;justify-content:flex-start}.story-list button[aria-current=true]{border-color:var(--accent);background:var(--soft)}.story-picks{max-height:240px;overflow:auto;padding:8px 4px}.story-shell details{margin:14px 0}.story-shell details>summary{cursor:pointer;font-weight:650;margin-bottom:12px}.story-context,.story-brief{padding:18px;border:1px solid var(--line);border-radius:10px;margin-top:18px}.story-brief[data-stale=true]{border-color:#bd883d;background:#fffaf1}.story-brief h3{margin:0 0 10px}.story-brief pre{max-height:340px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:14px;padding:14px;background:var(--paper)}.story-reference{border-top:1px solid var(--line);padding:14px 0;overflow-wrap:anywhere}.story-reference textarea{min-height:64px}#story-status{overflow-wrap:anywhere}#story-status.error{color:var(--red);font-weight:650}#story-scene-id{overflow-wrap:anywhere;max-width:100%}.story-shell input:disabled,.story-shell select:disabled{opacity:.55}.story-shell [hidden]{display:none!important}@media(max-width:780px){.story-layout{grid-template-columns:minmax(0,1fr);gap:14px}.story-layout aside{border:0;border-bottom:1px solid var(--line);padding:0 0 14px}.story-list{flex-direction:row;max-height:100px;overflow:auto}.story-list button{min-width:150px;width:auto;flex-shrink:0}.story-heading{display:block}.story-heading>.tag{display:inline-block;margin:8px 0}.story-shell .formrow{grid-template-columns:1fr}}
+/* Comfortable authoring layout: less simultaneous work, not smaller text. */
+:root{--ux-side:240px;--ux-reading:16px}
+body{font-size:16px;line-height:1.8;background:#f4f5f1}
+main{padding:42px 48px 96px;max-width:none}
+.ux-page-heading{margin-bottom:30px}.ux-page-heading h1{font-size:clamp(27px,2.5vw,36px);line-height:1.35}
+.ux-page-heading p:last-child{font-size:15px;max-width:68ch;line-height:1.8}
+.panel{padding:32px;border-radius:18px;margin-bottom:28px;box-shadow:0 3px 18px #18302205}
+.panel h2{font-size:23px;margin-bottom:20px}.panel h3{font-size:19px}
+.hint,.checkline{font-size:14px;line-height:1.85}.small{font-size:13px}
+label.field{margin-bottom:26px;font-size:16px;font-weight:600}
+input,textarea,select{font-size:16px;padding:13px 15px;line-height:1.75;border-radius:10px;margin-top:8px}
+textarea{min-height:142px}#prompt{min-height:248px;font-size:17px;line-height:1.95}
+button,.filebtn{font-size:15px;min-height:46px;padding:11px 17px}
+.formrow{gap:24px}.actions{gap:12px;row-gap:14px;margin-top:20px}
+#ux-shot.grid{grid-template-columns:minmax(0,1fr);max-width:1020px;margin-inline:auto}
+#ux-shot-tools{max-width:1020px;margin-inline:auto;padding-bottom:14px}
+#ux-navigation a{padding:13px 12px;font-size:15px;min-height:58px}
+#ux-navigation a small{font-size:12px;line-height:1.7}#ux-sidebar{padding:26px 20px}
+.ux-sidebar-bottom{margin-top:18px}#ux-topbar{padding-inline:34px}.ux-top-actions button{min-height:42px}
+#studio-home .desk-hub{gap:26px}#studio-home .desk-hub>div{padding:28px;border-radius:18px}
+#studio-home .desk-hub p{font-size:15px;line-height:1.85}.studio-routes{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.studio-routes a{padding:24px;min-height:130px}.studio-routes strong{font-size:17px}.studio-routes span{font-size:13px;line-height:1.8}
+.comfort-ide{padding:22px 26px;border:1px solid var(--line);border-radius:14px;background:#fff;margin:24px 0}
+.comfort-ide summary{font-size:16px}.comfort-ide-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;margin:22px 0}
+.comfort-ide p{font-size:14px;line-height:1.9}.comfort-ide code{font-size:13px}
+#story-section .story-heading{padding-bottom:18px;border-bottom:1px solid var(--line)}
+#story-section>.actions{margin:24px 0}.story-route{font-size:14px;padding:16px 20px}
+.story-tabs{gap:12px;border-bottom:1px solid var(--line);padding-bottom:18px;margin:30px 0}
+.story-tabs button{min-height:48px;font-size:16px;padding:12px 21px}
+.story-layout{grid-template-columns:210px minmax(0,1fr);gap:34px}.story-layout aside{padding-right:22px}
+.story-list{gap:10px}.story-list button{padding:15px 12px;line-height:1.75;min-height:60px}
+.story-list button small{display:block;font-size:12px}.story-picks{max-height:none;padding:14px 0}
+.comfort-steps{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:0 0 18px;margin-bottom:26px}
+.comfort-steps button{font-size:14px;padding:10px 13px;min-height:44px;background:transparent;border-color:transparent;border-radius:8px;color:#566d5d}
+.comfort-steps button[aria-selected=true]{background:#e6f0e7;border-color:#c1d6c5;color:#164b32;font-weight:750}
+.comfort-hidden{display:none!important}.comfort-next{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding-top:20px;margin-top:20px;border-top:1px solid var(--line)}
+.comfort-next span{font-size:13px;color:var(--muted)}
+#story-purpose{min-height:105px}#story-action{min-height:210px}#story-dialogue{min-height:160px}#story-source-text{min-height:240px}
+#story-scene-editor>.actions{margin-top:0}.story-shell details>summary{font-size:15px;padding:10px 0}
+.story-context{padding:26px;margin-top:0}.story-brief{padding:26px;margin-top:24px}
+body.ux-all .comfort-steps{display:none}body.ux-all .comfort-next{display:none}
+body.ux-large label.field,body.ux-large input,body.ux-large textarea,body.ux-large select{font-size:18px}
+body.ux-large .hint,body.ux-large .checkline{font-size:16px}
+@media(min-width:1700px){main{max-width:1440px;margin-inline:auto;margin-left:calc(var(--ux-side) + (100vw - 1680px)/2);margin-right:calc((100vw - 1680px)/2)}}
+@media(max-width:1200px){main{padding:32px 28px 90px}.panel{padding:26px}.story-layout{grid-template-columns:170px minmax(0,1fr);gap:24px}.comfort-steps{gap:4px}.comfort-steps button{padding:10px 8px;font-size:13px}.studio-routes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:960px){.story-layout{grid-template-columns:minmax(0,1fr)}.story-layout aside{border-right:0;border-bottom:1px solid var(--line);padding:0 0 20px}.story-list{flex-direction:row;max-height:140px;overflow:auto}.story-list button{min-width:156px;width:auto;flex-shrink:0}.comfort-ide-grid{grid-template-columns:1fr;gap:10px}#ux-topbar{padding-inline:18px}.ux-top-actions kbd{display:none}}
+@media(max-width:760px){:root{--ux-side:0px}main{padding:28px 18px 96px}.panel{padding:22px 18px;border-radius:14px}.panel h2{font-size:21px}.ux-page-heading p:last-child{font-size:14px}.ux-page-heading h1{font-size:28px}#ux-sidebar{padding:8px 12px}#ux-navigation a{min-height:40px;font-size:14px;padding:8px 12px}.ux-top-actions button{min-height:40px}#studio-home .desk-hub>div{padding:24px}.studio-routes a{padding:21px;min-height:120px}.studio-routes strong{font-size:16px}.studio-routes span{font-size:13px}label.field{margin-bottom:24px}input,textarea,select{font-size:16px}.story-tabs{gap:6px}.story-tabs button{flex:1;min-width:80px;font-size:14px;padding:10px 8px}.comfort-steps button{font-size:13px;padding:10px 6px;flex:1;min-width:80px}.story-context,.story-brief{padding:20px 16px}.comfort-ide{padding:20px}.formrow{grid-template-columns:1fr}.comfort-next button{flex:1}#ux-shot-tools{max-width:100%}#ux-save-strip{font-size:12px;padding:12px 16px}.story-heading .tag{font-size:12px}}
+@media(max-width:390px){main{padding:24px 14px 94px}.panel{padding:20px 16px}.studio-routes{grid-template-columns:1fr}.comfort-steps button{font-size:12px;padding:9px 4px}.actions button{min-width:100px}}
+@media print{.comfort-hidden{display:block!important}.comfort-steps,.comfort-next{display:none}}
+.story-heading .story-kicker{display:none}.story-heading .hint{margin-bottom:0}.story-heading h2{margin-bottom:4px}
+#story-settings{margin:16px 0 24px;padding:12px 18px;background:#f7f9f5;border-radius:10px;border:1px solid var(--line)}
+#story-settings>summary{padding:2px 0;margin:0;font-size:14px;font-weight:600}#story-settings[open]>summary{margin-bottom:20px}
+.story-shell>.story-heading{padding-bottom:18px}.story-tabs{margin:22px 0}.story-empty-start{display:flex;gap:12px;margin-top:22px}
+#story-settings>.actions{margin-bottom:20px}
 </style>
 </head>
 <body>
@@ -55,14 +109,15 @@ main{max-width:1540px;padding:30px 36px 78px;margin:0 0 0 var(--ux-side)}main>se
  <div class="ux-nav-caption">工作区</div>
  <nav id="ux-navigation" aria-label="切换工作区">
   <a href="#studio-home" data-view="home"><span class="ux-nav-icon" aria-hidden="true">◫</span><span>开始与保存<small>继续工作 · 收工带走</small></span></a>
-  <a href="#ux-shot" data-view="shot"><span class="ux-nav-icon" aria-hidden="true">▤</span><span>镜头与素材<small>表达想法 · 确认交接</small></span></a>
+  <a href="#story-section" data-view="story"><span class="ux-nav-icon" aria-hidden="true">▥</span><span>故事与人物<small>梳理剧情 · 一场一场写</small></span></a>
+  <a href="#ux-shot" data-view="shot"><span class="ux-nav-icon" aria-hidden="true">▤</span><span>镜头与素材<small>单个镜头 · 素材与规格</small></span></a>
   <a href="#review-section" data-view="review"><span class="ux-nav-icon" aria-hidden="true">▷</span><span>审片与定稿<small>看候选 · 记录决定</small></span></a>
   <a href="#director-section" data-view="director"><span class="ux-nav-icon" aria-hidden="true">▧</span><span>导演与精修<small>定运动 · 定画面</small></span></a>
   <a href="#repair-section" data-view="repair"><span class="ux-nav-icon" aria-hidden="true">⌁</span><span>局部返工<small>明确要改的范围</small></span></a>
   <a href="#exchange-section" data-view="exchange"><span class="ux-nav-icon" aria-hidden="true">⇄</span><span>外部协作<small>带出去 · 带回来</small></span></a>
   <a href="#flex-section" data-view="flex"><span class="ux-nav-icon" aria-hidden="true">⊞</span><span>组合与模板<small>复用做对的部分</small></span></a>
  </nav>
- <div class="ux-sidebar-bottom"><button id="ux-show-all" type="button" aria-pressed="false">完整长页视图</button><p>文件留在本地<br>不自动生成、选片或付款</p><span class="ux-build">0.2.0+r16.8</span></div>
+ <div class="ux-sidebar-bottom"><button id="ux-show-all" type="button" aria-pressed="false">完整长页视图</button><p>文件留在本地<br>不自动生成、选片或付款</p><span class="ux-build">0.2.0+r16.9</span></div>
 </aside>
 <header id="ux-topbar">
  <div class="ux-breadcrumb"><span>创作间</span><span aria-hidden="true">/</span><strong id="ux-current">开始与保存</strong></div>
@@ -88,7 +143,7 @@ main{max-width:1540px;padding:30px 36px 78px;margin:0 0 0 var(--ux-side)}main>se
 
 <main>
 <section class="panel" id="studio-home">
- <div class="brandline"><div><span class="tag good">0.2.0+r16.8 · 可外部往返的个人创作台</span><h2>打开材料，继续创作，收工带走。</h2></div><span class="tag">离线 · 人工确认</span></div>
+ <div class="brandline"><div><span class="tag good">0.2.0+r16.9 · 可外部往返的个人创作台</span><h2>打开材料，继续创作，收工带走。</h2></div><span class="tag">离线 · 人工确认</span></div>
  <p class="hint"><a href="#flex-section">自由组合与个人模板</a> · 沿用你的质量优先规则，不自动选型、生成或付款。现在可把镜头与审片、局部返工、导演材料一起存成一个总备份；原有单区 ZIP 继续可用。</p>
  <p><a href="#exchange-section">外部工具往返：带走原素材，逐字段带回文字修改 →</a></p>
  <div id="desk-hub" class="desk-hub">
@@ -139,6 +194,12 @@ main{max-width:1540px;padding:30px 36px 78px;margin:0 0 0 var(--ux-side)}main>se
 </style>
 
 
+<details id="ide-guide" class="comfort-ide">
+ <summary>准备让本地 IDE 的 AI 接着做？</summary>
+ <p>先把浏览器里的实际工作保存到硬盘。AI 不会自动读到这个页面未保存的输入。</p>
+ <div class="comfort-ide-grid"><div><strong>01 · 保存现场</strong><p>使用顶部「保存收工包」，把故事、镜头与原素材带走。</p></div><div><strong>02 · 交给本地 AI</strong><p>在完整项目包中打开 <code>MANJU.code-workspace</code>，让 AI 从 <code>AGENTS.md</code> 开始。</p></div><div><strong>03 · 核验后接回</strong><p>AI 生成新的返回收工包。你先另存当前工作，再核验、预览并确认恢复。</p></div></div>
+ <p class="hint">只安装上手包时没有开发源码；完整包才包含 IDE 接管入口。不会打开远程 AI、读取账号或自动上传。</p>
+</details>
  <nav class="studio-routes" aria-label="创作路径">
   <a href="#workspace-section"><strong>准备镜头</strong><span>任务、素材与型号约束</span></a>
   <a href="#review-section"><strong>审片与定稿</strong><span>先看真实候选，再做决定</span></a>
@@ -165,26 +226,44 @@ main{max-width:1540px;padding:30px 36px 78px;margin:0 0 0 var(--ux-side)}main>se
 <div id="status" role="status" aria-live="polite" class="status">准备就绪。打开材料，或从工作区开始；文件只在本地读取。</div>
 <section class="panel" id="workspace-section"><h2>镜头任务与审片现场</h2><p class="hint">换窗口或换电脑前，把任务、能力档、审片历史、未完成的文字和实际素材一起保存。恢复前逐文件验哈希，历史记录不等于重新批准。</p><div class="actions"><button id="export-workspace">备份整个工作现场 ZIP</button><label class="filebtn" for="import-workspace">核验并恢复工作现场<input class="hidden" id="import-workspace" type="file" accept=".zip,application/zip"></label></div><p class="hint" id="workspace-status">备份包括被任务和审片引用的实际媒体，不含下方独立返工区和导演区；缺少文件会明确拒绝，不产生看似完整的空壳备份。请自行保留原 ZIP。</p></section>
 <section id="story-section" class="panel story-shell">
- <div class="story-heading"><div><p class="story-kicker">STORY → PRODUCTION</p><h2>故事依据 · 拍之前，先接好前因后果</h2><p class="hint">作品形态、场景顺序、人物与参考职责放在一起。内容改了就复核，不自动重生成。</p></div><span id="story-count" class="tag">可选，不改变原有工作方式</span></div>
- <div class="actions"><button id="story-create" type="button">建立故事工作本</button><label class="filebtn" for="story-file">打开故事 JSON<input id="story-file" class="hidden" type="file" accept=".json"></label><button id="story-export" type="button" disabled>导出完整故事 JSON</button><button id="story-unlink" type="button" disabled>解除当前镜头的故事关联</button></div>
- <p class="hint">故事工作本是可编辑工作副本，不会反写原剧集 Bible。与当前工作区的媒体一起保存请用顶部「保存收工包」。历史简报中的哈希不是原文件，未绑定的旧素材不自动找回。旧版只读内层 STUDIO.zip，不含本工作本。</p>
+ <div class="story-heading"><div><p class="story-kicker">STORY → PRODUCTION</p><h2>故事工作本</h2><p class="hint">从一场开始就好。人物、前情与历史版本都在这里，不会自动改写。</p></div><span id="story-count" class="tag">可选，不改变原有工作方式</span></div>
+ <div class="story-empty-start"><button id="story-create" type="button">建立故事工作本</button><button id="story-open-shortcut" type="button">打开已有故事</button></div>
  <div id="story-import-preview" class="warningbox" hidden><p id="story-import-summary"></p><label class="checkline"><input id="story-import-confirmed" type="checkbox">明确替换故事工作本，镜头和原素材保持</label><div class="actions"><button id="story-import-apply" disabled>确认替换工作本</button><button id="story-import-cancel">取消</button></div></div>
  <div id="story-editor" hidden>
+ <details id="story-settings" data-ux-disclosure><summary>作品设置与文件 · 名称、形态、导入导出</summary>
+ <div class="actions"><label class="filebtn" for="story-file">打开故事 JSON<input id="story-file" class="hidden" type="file" accept=".json"></label><button id="story-export" type="button" disabled>导出完整故事 JSON</button><button id="story-unlink" type="button" disabled>解除当前镜头的故事关联</button></div>
+ <p class="hint">故事工作本是可编辑工作副本，不会反写原剧集 Bible。与当前工作区的媒体一起保存请用顶部「保存收工包」。历史简报中的哈希不是原文件，未绑定的旧素材不自动找回。旧版只读内层 STUDIO.zip，不含本工作本。</p>
  <div class="formrow"><label class="field">作品名称<input id="story-title" maxlength="240" placeholder="可以先留空"></label><label class="field">作品形态<select id="story-form"><option value="undecided">尚未决定</option><option value="film">单片 / 作者短片</option><option value="limited_series">限定长篇 / 限定剧</option><option value="ongoing_series">可续订系列</option><option value="vertical_serial">竖屏连载短剧</option><option value="music_visual">音乐影像 / 非叙事影像</option><option value="custom">自定义</option></select></label></div>
  <p id="story-route" class="story-route"></p>
  <details><summary>作品意图与结束条件（不是强制结构）</summary><div class="formrow"><label class="field">希望观众经历什么<textarea id="story-intent" maxlength="12000"></textarea></label><label class="field">作者的结束条件 / 尚未公开的结局<textarea id="story-ending" maxlength="12000"></textarea></label></div></details>
+ </details>
  <div class="story-tabs" role="group" aria-label="故事工作本区域"><button data-story-tab="scenes" aria-pressed="true">场景与前情</button><button data-story-tab="sources" aria-pressed="false">人物与依据</button><button data-story-tab="briefs" aria-pressed="false">版本与复盘</button></div>
  <div id="story-tab-scenes">
   <div class="story-layout"><aside><div class="actions"><button id="story-add-scene">＋ 新场景</button></div><div id="story-scenes" class="story-list"></div><p class="hint">从上到下是实际播放顺序，不按编号排序。编号在改名后保持不变。</p></aside><div id="story-scene-editor" hidden>
+  <div class="comfort-steps" role="tablist" aria-label="本场编辑步骤">
+   <button type="button" id="scene-step-write" role="tab" aria-selected="true" aria-controls="scene-pane-write" data-scene-step="write">1 · 写这一场</button>
+   <button type="button" id="scene-step-refs" role="tab" aria-selected="false" aria-controls="scene-pane-refs" data-scene-step="refs" tabindex="-1">2 · 人物与参考</button>
+   <button type="button" id="scene-step-brief" role="tab" aria-selected="false" aria-controls="scene-pane-brief" data-scene-step="brief" tabindex="-1">3 · 制作版本</button>
+  </div>
+  <div id="scene-pane-write" data-scene-pane="write" role="tabpanel" aria-labelledby="scene-step-write">
   <div class="actions"><button id="story-move-up">↑ 前移</button><button id="story-move-down">↓ 后移</button><span id="story-scene-id" class="small muted"></span></div>
   <div class="formrow"><label class="field">分集 / 章节<input id="story-episode" maxlength="120" placeholder="E01，可留空"></label><label class="field">场景名称<input id="story-scene-title" maxlength="240" placeholder="例如：渡口交接"></label></div>
   <label class="field">这一场的作用<textarea id="story-purpose" maxlength="4000" placeholder="删掉它会失去什么？"></textarea></label>
   <label class="field">实际动作与因果<textarea id="story-action" maxlength="12000" placeholder="谁想得到什么，采取什么行动，发生什么结果？"></textarea></label>
   <label class="field">对白 / 画内文字<textarea id="story-dialogue" maxlength="12000" placeholder="按原语言保留"></textarea></label>
   <details><summary>入场与离场状态、伏笔后果</summary><div class="formrow"><label class="field">进入本场之前<textarea id="story-before" maxlength="4000"></textarea></label><label class="field">本场之后留下的变化<textarea id="story-after" maxlength="4000"></textarea></label></div></details>
+  <div class="comfort-next"><button type="button" data-scene-go="refs">下一步：选择人物与参考 →</button><span>不必填写完整才继续</span></div>
+  </div>
+  <div id="scene-pane-refs" data-scene-pane="refs" role="tabpanel" aria-labelledby="scene-step-refs">
   <details open><summary>本场使用哪些人物与依据</summary><div id="story-source-picks" class="story-picks"></div><p class="hint">默认不选全库。库中再长，只带本场明确引用的部分；更改引用内容会提示关联简报复核。</p></details>
-  <details><summary>参考素材各负责什么</summary><p class="hint">复用下面或其他工作区已经绑定的原素材。一份可担任多种职责，不等于供应商支持这种组合。</p><div class="formrow"><label class="field">实际素材<select id="story-reference-file"></select></label><label class="field">职责<select id="story-reference-role"><option value="identity">身份</option><option value="space">空间与路线</option><option value="performance">表演与动作</option><option value="camera">机位与运镜</option><option value="voice">声音参考</option><option value="music">音乐与拍点</option><option value="look">外观与光线</option><option value="other">其他</option></select></label></div><div class="actions"><button id="story-refresh-media">刷新已绑定素材</button><button id="story-add-reference">添加职责</button></div><div id="story-references"></div></details>
+  <details open><summary>参考素材各负责什么</summary><p class="hint">复用下面或其他工作区已经绑定的原素材。一份可担任多种职责，不等于供应商支持这种组合。</p><div class="formrow"><label class="field">实际素材<select id="story-reference-file"></select></label><label class="field">职责<select id="story-reference-role"><option value="identity">身份</option><option value="space">空间与路线</option><option value="performance">表演与动作</option><option value="camera">机位与运镜</option><option value="voice">声音参考</option><option value="music">音乐与拍点</option><option value="look">外观与光线</option><option value="other">其他</option></select></label></div><div class="actions"><button id="story-refresh-media">刷新已绑定素材</button><button id="story-add-reference">添加职责</button></div><div id="story-references"></div></details>
+  <div class="comfort-next"><button type="button" data-scene-go="write">← 回到写作</button><button type="button" data-scene-go="brief">下一步：记录制作版本 →</button></div>
+  </div>
+  <div id="scene-pane-brief" data-scene-pane="brief" role="tabpanel" aria-labelledby="scene-step-brief">
+  <p class="hint">这里决定交给模型的上下文。记录版本不等于批准生成，也不会消耗额度。</p>
   <div class="story-context"><div class="formrow"><label class="field">此次上下文的阅读范围<select id="story-scope"><option value="audience">观众截至本场可知</option><option value="character">指定人物截至本场可知</option><option value="author">作者制作视角（可能剧透）</option></select></label><label class="field">指定人物<select id="story-character"></select></label></div><label class="field">附带最近前情场数（0 至 20）<input id="story-history" type="number" min="0" max="20" step="1" value="0"></label><p class="hint">人物视角不自动带入前情正文，只带明确标注为该人物或公开可知的引用资料。作者写在本场动作里的内容不会被自动识别为剧透。</p><button id="story-freeze" class="primary">记录本场制作版本</button></div>
+  <div class="comfort-next"><button type="button" data-scene-go="refs">← 回到人物与参考</button></div>
+  </div>
   </div></div>
  </div>
  <div id="story-tab-sources" hidden><div class="story-layout"><aside><button id="story-add-source">＋ 新人物 / 依据</button><div id="story-sources" class="story-list"></div></aside><div id="story-source-editor" hidden>
@@ -379,7 +458,7 @@ main{max-width:1540px;padding:30px 36px 78px;margin:0 0 0 var(--ux-side)}main>se
 </style>
 
 <details class="panel"><summary>使用与保存说明</summary><p>本页面不依赖服务器或第三方脚本。草稿尝试保存在当前浏览器的本地存储中，但浏览器清理、隐私模式或 file:// 限制都可能让它失效；请把 JSON 或 ZIP 导出到自己的磁盘。恢复草稿不会恢复媒体字节，必须重新绑定文件。</p><p>从已有工程导入：<code>manju models from-shot 项目目录 镜头编号 --output shot-import.json</code>，然后在这里“导入任务 / 镜头”。原项目不被修改。</p><p>新适配包是独立伴随文件，不向旧 R2 provider-handoff 插入内容。它不生成视频，不连接商用接口，不改动原影片的选片或锁片状态。</p><p>JSON 数据只按文本显示；能力来源网址仅作证据记录，不由本页面自动访问。</p></details>
-<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">0.2.0+r16.8 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
+<footer class="footer"><div class="brandline"><span>MANJU · 本地文本是真相，媒体只增不改。</span><span class="release">0.2.0+r16.9 · 研究核验 2026-09-08</span></div><span id="storage-note">草稿仅作临时恢复；导出文件才是你手里的备份。</span></footer>
 </main>
 <script id="builtin-quality" type="application/json">{
   "schema_id": "manju.quality-shortlist/v1",
@@ -4519,6 +4598,7 @@ window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPr
  const main = document.querySelector('main');
  const views = {
   home: {title:'开始与保存',heading:'把注意力留给创作。',note:'打开一份材料继续工作；收工时，把原素材和待处理意见一起带走。',en:'YOUR LOCAL CREATIVE SPACE',target:'studio-home'},
+  story: {title:'故事与人物',heading:'把故事展开，一场一场写。',note:'先写场景，再选人物与参考，最后记录制作版本。随时切换，未完成的文字也会保留。',en:'STORY & CHARACTERS',target:'story-section'},
   shot: {title:'镜头与素材',heading:'先把这个镜头说清楚。',note:'写下画面与声音，绑定参考素材，再选择适配路径。质量优先，不自动降档。',en:'SHOT & REFERENCES',target:'ux-shot'},
   review: {title:'审片与定稿',heading:'先看画面，再做决定。',note:'比较实际候选，保留每次人工意见。规格通过不等于创作批准。',en:'REVIEW & DECIDE',target:'review-section'},
   director: {title:'导演与精修',heading:'定好运动，再打磨画面。',note:'保留运动底片，提取关键时刻，带出精修，再把高分辨率目标图接回来。',en:'DIRECT & REFINE',target:'director-section'},
@@ -4536,7 +4616,7 @@ window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPr
  const toolsLabel=document.createElement('summary');toolsLabel.textContent='任务文件、能力档与单区备份';tools.append(toolsLabel);
  if(oldToolbar){oldToolbar.before(tools);tools.append(oldToolbar);}
  if($('workspace-section'))tools.append($('workspace-section'));
- register(tools,'shot');register($('catalog-preview'),'shot');register($('story-section'),'shot');
+ register(tools,'shot');register($('catalog-preview'),'shot');register($('story-section'),'story');
  const grid=main.querySelector(':scope > .grid');if(grid){grid.id='ux-shot';register(grid,'shot');}
  for(const key of ['review','director','repair','exchange','flex'])register($(views[key].target),key);
  // Keep old backup controls available, but stop competing with the daily save action.
@@ -4571,6 +4651,7 @@ window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPr
   const activeLink=document.querySelector('#ux-navigation [aria-current="page"]'),nav=$('ux-navigation');if(activeLink&&nav.scrollWidth>nav.clientWidth){const linkBox=activeLink.getBoundingClientRect(),navBox=nav.getBoundingClientRect();if(linkBox.left<navBox.left)nav.scrollLeft-=navBox.left-linkBox.left;else if(linkBox.right>navBox.right)nav.scrollLeft+=linkBox.right-navBox.right;}
   const info=views[current];$('ux-current').textContent=all?'完整长页':info.title;$('ux-heading').textContent=all?'所有工具，完整展开。':info.heading;
   $('ux-eyebrow').textContent=all?'COMPLETE WORKBENCH':info.en;$('ux-description').textContent=all?'这是原有的完整工作方式。需要专注时，切回分区视图；文字与素材保持不变。':info.note;
+  window.ManjuComfort?.sync();
   // Avoid invisible video/audio continuing to play when switching tasks. Never seek or autoplay.
   if(!all)for(const media of main.querySelectorAll('video,audio'))if(media.closest('.ux-view-hidden'))media.pause();
   if(scroll)window.scrollTo({top:0,behavior:'auto'});if(focus)$('ux-heading').focus({preventScroll:true});
@@ -4578,7 +4659,7 @@ window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPr
  function navigate(view,{scroll=true,focus=false}={}){if(!views[view])return false;if(!all&&current!==view)scrollPositions.set(current,window.scrollY);current=view;present({scroll:false,focus});if(scroll)window.scrollTo({top:all?0:(scrollPositions.get(view)||0),behavior:'auto'});return true;}
  function reveal(id,{scroll=true,focus=false}={}){
   const target=$(id);if(!target)return false;
-  const view=viewFor(target);if(view)navigate(view,{scroll:false});revealDetails(target);
+  const view=viewFor(target);if(view)navigate(view,{scroll:false});window.ManjuComfort?.reveal(target);revealDetails(target);
   if(scroll)target.scrollIntoView({block:'start',behavior:'auto'});
   if(focus){if(target.matches('input,textarea,select,button'))target.focus({preventScroll:true});else{$('ux-heading').focus({preventScroll:true});}}
   return true;
@@ -4621,6 +4702,7 @@ window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPr
  function connectContinuation(){const panel=$('continue-panel');if(panel&&!nodes.has(panel)){register(panel,'home');$('studio-home').after(panel);present({scroll:false});}}
  new MutationObserver(connectContinuation).observe(main,{childList:true});connectContinuation();
  const commands=[
+  {name:'本地 IDE AI 接手',description:'保存收工包，再在本地工作目录编辑并核验返回。',target:'ide-guide',words:'AI IDE Codex Claude Cursor 接管'},
   {name:'故事、人物与制作版本',description:'作品形态、真实场序、知情范围、参考职责与变更复核。',target:'story-section',words:'剧情 长篇 人物 伏笔 前情 故事 版本 关系'},
   {name:'原尺寸查看关键帧与目标图',description:'进入导演区，点击缩略图打开大图。只查看，不修改或批准。',target:'director-anchors',words:'大图 放大 100% 看图 对比 精修 原图'},
   ...Object.entries(views).map(([key,v])=>({name:v.title,description:v.note,target:v.target,words:key})),
@@ -4780,6 +4862,47 @@ window.ManjuRelink={state:relinkState,inventory:relinkInventory,prepare:relinkPr
  });
  const issueObserver=new MutationObserver(()=>{for(const [id,value] of issueValues)if($(id).value!==value)clearIssue($(id));});
  for(const id of ['status','desk-save-status'])issueObserver.observe($(id),{childList:true,subtree:true,characterData:true});
+})();
+
+/* View composition only. Never serialize navigation into creative data. */
+(() => {
+ 'use strict';
+ const $=id=>document.getElementById(id);
+ const panes=[...document.querySelectorAll('[data-scene-pane]')];
+ let step='write';
+ function sync(){
+  const all=Boolean(window.ManjuExperience?.state().all);
+  for(const p of panes)p.classList.toggle('comfort-hidden',!all&&p.dataset.scenePane!==step);
+  for(const b of document.querySelectorAll('[data-scene-step]')){
+   const selected=b.dataset.sceneStep===step;b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1;
+  }
+ }
+ function choose(value,focus=false){
+  if(!panes.some(p=>p.dataset.scenePane===value))return;
+  step=value;sync();if(focus)$('scene-step-'+step).focus({preventScroll:true});
+ }
+ function reveal(node){const p=node.closest('[data-scene-pane]');if(p)choose(p.dataset.scenePane);}
+ document.querySelectorAll('[data-scene-step]').forEach(b=>b.addEventListener('click',()=>choose(b.dataset.sceneStep)));
+ document.querySelectorAll('[data-scene-go]').forEach(b=>b.addEventListener('click',()=>{choose(b.dataset.sceneGo,true);$('scene-step-'+step).scrollIntoView({block:'nearest'});}));
+ document.querySelector('.comfort-steps')?.addEventListener('keydown',event=>{
+  const buttons=[...document.querySelectorAll('[data-scene-step]')],i=buttons.indexOf(document.activeElement);
+  if(i<0||event.isComposing)return;
+  let next=i;if(event.key==='ArrowRight')next=(i+1)%buttons.length;else if(event.key==='ArrowLeft')next=(i+buttons.length-1)%buttons.length;else if(event.key==='Home')next=0;else if(event.key==='End')next=buttons.length-1;else return;
+  event.preventDefault();choose(buttons[next].dataset.sceneStep,true);
+ });
+ $('story-open-shortcut')?.addEventListener('click',()=>$('story-file').click());
+ $('story-create')?.addEventListener('click',()=>{if($('story-settings'))$('story-settings').open=true;});
+ function summary(){
+  const doc=window.ManjuStory?.view();
+  const head=document.querySelector('.story-heading h2');if(head)head.textContent=doc?.title||'故事工作本';
+  document.querySelector('.story-empty-start')?.classList.toggle('comfort-hidden',Boolean(doc));
+ }
+ for(const id of ['story-title','story-form'])$(id)?.addEventListener('input',summary);
+ if($('story-count'))new MutationObserver(summary).observe($('story-count'),{childList:true,characterData:true,subtree:true});
+ summary();
+ const routes=document.querySelector('.studio-routes');
+ if(routes){const a=document.createElement('a');a.href='#story-section';a.innerHTML='<strong>写故事与人物</strong><span>梳理剧情、关系与每场变化</span>';routes.prepend(a);}
+ window.ManjuComfort={sync,reveal,choose,state:()=>({step})};sync();
 })();
 </script>
 </body></html>

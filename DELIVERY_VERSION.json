@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.8",
+  "version": "0.2.0+r16.9",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -119,7 +119,8 @@
       "本窗口保留恢复点按保存序列而非系统时钟，倒拨时间不误删较新点",
       "逐关键帧精修任务、原图与逐张提示词导出，明确顶尖图像入口，分批返回时核对共用与单锚点基线、保留高像素PNG",
       "分区工作台、常驻保存与真实备份状态、快捷查找和大字阅读；完整长页兼容视图，切换不改草稿素材或审批",
-      "可选故事工作本：作品形态、稳定编号场序、显式知情、引用版本与人工复盘，Desk/v2收工保存，Studio/v1不变"
+      "可选故事工作本：作品形态、稳定编号场序、显式知情、引用版本与人工复盘，Desk/v2收工保存，Studio/v1不变",
+      "通用AI接管入口、只读冷启动检查、故事/文字/原素材IDE往返；独立故事导航与分步写作，保留原协议和批准边界"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
@@ -127,7 +128,7 @@
   "formal_windows_release": false,
   "commercial_api_executed": false,
   "prior_verified_stage": "R16",
-  "prior_archive_sha256": "ae74c0d1e1a1725f21e16455c4f2b5acd8a3ee7498016acd306a29bd9d87957f",
-  "maintenance_revision": "story-sources-versioned-production-briefs",
-  "prior_verified_version": "0.2.0+r16.7"
+  "prior_archive_sha256": "dddea9aa3ce0136cf572095b188721592274ac03af0f7d1fa240e68db81b6a91",
+  "maintenance_revision": "ide-handoff-and-focused-writing",
+  "prior_verified_version": "0.2.0+r16.8"
 }

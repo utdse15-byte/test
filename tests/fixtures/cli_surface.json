@@ -455,6 +455,27 @@
       "request"
     ]
   },
+  "models ide-open": {
+    "exists": true,
+    "params": [
+      "archive",
+      "output"
+    ]
+  },
+  "models ide-preview": {
+    "exists": true,
+    "params": [
+      "workspace"
+    ]
+  },
+  "models ide-return": {
+    "exists": true,
+    "params": [
+      "expected_preview",
+      "output",
+      "workspace"
+    ]
+  },
   "models inspect-return": {
     "exists": true,
     "params": [

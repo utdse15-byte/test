@@ -4633,3 +4633,7 @@ The personal entry points STATE.md and FINAL_HANDOFF.md must refer to the newest
 immutable PROJECT_STATE snapshot. Old snapshots, task files, quality/catalog bytes,
 CLI entries and LAST_GREEN remain intact. Real download files and separate restore
 receipts remain mandatory; selected regression success is not Windows release proof.
+
+## IDE-AUTHORING-20260913
+
+Local AI works on saved immutable checkout baselines and editable story/text copies, not unsaved browser memory. Explicit preview hashes return a new candidate and never merge later browser drafts automatically. Source repository, film project and browser session are distinct objects. AGENTS/CLAUDE route to one policy; older IDE tasks are historical. Instructions are not an execution sandbox or proof of AI understanding. Story is a separate comfortable authoring view; original controls and protocols remain, and view changes do not mark creative edits.

@@ -138,3 +138,15 @@ timecode, grid-drift analysis) is its landed foundation. Export honesty lives in
 `manju.conform-loss/v1` (`exporters/conform.py`): per-target
 preserved/approximated/dropped/unsupported tables (line-cited) + exact
 one-frame-drift detection — no exporter degrades silently.
+
+## 本地 IDE 工作副本（r16.9）
+
+先在浏览器保存收工包；未保存内容不是磁盘文件。以下命令默认输出 JSON，具体参数以当前 `--help` 为准。
+
+```text
+manju models ide-open CHECKOUT.zip --output AI_WORK
+manju models ide-preview AI_WORK
+manju models ide-return AI_WORK --expected-preview HASH --output RETURNED_CHECKOUT.zip
+```
+
+只修改 STORY.json 与 EDIT.json 的允许内容，预览后显式创建新候选，拒绝覆盖原文件。旧参考媒体、简报和已有观察保留。后来的浏览器新稿不会自动合并；详见 docs/ai/OPERATIONS.md。

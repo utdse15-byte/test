@@ -129,3 +129,6 @@ reporting window stays visible; the era table keeps their record intact.
 | continuation/R12_VALIDATION.md | 已有R12专项验收及边界 | 历史报告保持原样 |
 | continuation/R13_PROJECT_REVIEW.md | 个人创作台、三工作区总备份、下载回读与最新接管入口 | 真实源码梳理及本轮落实 |
 | continuation/R13_VALIDATION.md | 632点同进程回归、独立安装与真媒体演练、继承保护 | 修复候选，非Windows正式绿灯 |
+
+| ide_ux/PROJECT_REVIEW.md | r16.9：通用AI接管、普通文件往返、故事独立与三步写作 | 无商业IDE自动化认证 |
+| ide_ux/VALIDATION.md | 新旧备份、实际CLI、浏览器、安装与下载的独立证据 | 选定范围非全项目 |

@@ -7,6 +7,7 @@
  const main = document.querySelector('main');
  const views = {
   home: {title:'开始与保存',heading:'把注意力留给创作。',note:'打开一份材料继续工作；收工时，把原素材和待处理意见一起带走。',en:'YOUR LOCAL CREATIVE SPACE',target:'studio-home'},
+  story: {title:'故事与人物',heading:'把故事展开，一场一场写。',note:'先写场景，再选人物与参考，最后记录制作版本。随时切换，未完成的文字也会保留。',en:'STORY & CHARACTERS',target:'story-section'},
   shot: {title:'镜头与素材',heading:'先把这个镜头说清楚。',note:'写下画面与声音，绑定参考素材，再选择适配路径。质量优先，不自动降档。',en:'SHOT & REFERENCES',target:'ux-shot'},
   review: {title:'审片与定稿',heading:'先看画面，再做决定。',note:'比较实际候选，保留每次人工意见。规格通过不等于创作批准。',en:'REVIEW & DECIDE',target:'review-section'},
   director: {title:'导演与精修',heading:'定好运动，再打磨画面。',note:'保留运动底片，提取关键时刻，带出精修，再把高分辨率目标图接回来。',en:'DIRECT & REFINE',target:'director-section'},
@@ -24,7 +25,7 @@
  const toolsLabel=document.createElement('summary');toolsLabel.textContent='任务文件、能力档与单区备份';tools.append(toolsLabel);
  if(oldToolbar){oldToolbar.before(tools);tools.append(oldToolbar);}
  if($('workspace-section'))tools.append($('workspace-section'));
- register(tools,'shot');register($('catalog-preview'),'shot');register($('story-section'),'shot');
+ register(tools,'shot');register($('catalog-preview'),'shot');register($('story-section'),'story');
  const grid=main.querySelector(':scope > .grid');if(grid){grid.id='ux-shot';register(grid,'shot');}
  for(const key of ['review','director','repair','exchange','flex'])register($(views[key].target),key);
  // Keep old backup controls available, but stop competing with the daily save action.
@@ -59,6 +60,7 @@
   const activeLink=document.querySelector('#ux-navigation [aria-current="page"]'),nav=$('ux-navigation');if(activeLink&&nav.scrollWidth>nav.clientWidth){const linkBox=activeLink.getBoundingClientRect(),navBox=nav.getBoundingClientRect();if(linkBox.left<navBox.left)nav.scrollLeft-=navBox.left-linkBox.left;else if(linkBox.right>navBox.right)nav.scrollLeft+=linkBox.right-navBox.right;}
   const info=views[current];$('ux-current').textContent=all?'完整长页':info.title;$('ux-heading').textContent=all?'所有工具，完整展开。':info.heading;
   $('ux-eyebrow').textContent=all?'COMPLETE WORKBENCH':info.en;$('ux-description').textContent=all?'这是原有的完整工作方式。需要专注时，切回分区视图；文字与素材保持不变。':info.note;
+  window.ManjuComfort?.sync();
   // Avoid invisible video/audio continuing to play when switching tasks. Never seek or autoplay.
   if(!all)for(const media of main.querySelectorAll('video,audio'))if(media.closest('.ux-view-hidden'))media.pause();
   if(scroll)window.scrollTo({top:0,behavior:'auto'});if(focus)$('ux-heading').focus({preventScroll:true});
@@ -66,7 +68,7 @@
  function navigate(view,{scroll=true,focus=false}={}){if(!views[view])return false;if(!all&&current!==view)scrollPositions.set(current,window.scrollY);current=view;present({scroll:false,focus});if(scroll)window.scrollTo({top:all?0:(scrollPositions.get(view)||0),behavior:'auto'});return true;}
  function reveal(id,{scroll=true,focus=false}={}){
   const target=$(id);if(!target)return false;
-  const view=viewFor(target);if(view)navigate(view,{scroll:false});revealDetails(target);
+  const view=viewFor(target);if(view)navigate(view,{scroll:false});window.ManjuComfort?.reveal(target);revealDetails(target);
   if(scroll)target.scrollIntoView({block:'start',behavior:'auto'});
   if(focus){if(target.matches('input,textarea,select,button'))target.focus({preventScroll:true});else{$('ux-heading').focus({preventScroll:true});}}
   return true;
@@ -109,6 +111,7 @@
  function connectContinuation(){const panel=$('continue-panel');if(panel&&!nodes.has(panel)){register(panel,'home');$('studio-home').after(panel);present({scroll:false});}}
  new MutationObserver(connectContinuation).observe(main,{childList:true});connectContinuation();
  const commands=[
+  {name:'本地 IDE AI 接手',description:'保存收工包，再在本地工作目录编辑并核验返回。',target:'ide-guide',words:'AI IDE Codex Claude Cursor 接管'},
   {name:'故事、人物与制作版本',description:'作品形态、真实场序、知情范围、参考职责与变更复核。',target:'story-section',words:'剧情 长篇 人物 伏笔 前情 故事 版本 关系'},
   {name:'原尺寸查看关键帧与目标图',description:'进入导演区，点击缩略图打开大图。只查看，不修改或批准。',target:'director-anchors',words:'大图 放大 100% 看图 对比 精修 原图'},
   ...Object.entries(views).map(([key,v])=>({name:v.title,description:v.note,target:v.target,words:key})),
