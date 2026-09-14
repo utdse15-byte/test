@@ -23,7 +23,7 @@ def test_ui_gate_requires_actual_focused_rehearsals(ui_gate):
 
 @pytest.mark.parametrize('field',['ok','actual_browser_download','navigation_preserves_all_fields','hidden_video_paused_without_seek','fresh_page_roundtrip_identical','legacy_r16_5_roundtrip_identical','checkout_sha256'])
 def test_ui_gate_rejects_bad_or_divergent_results(ui_gate,field):
-    repo,e=ui_gate;p=e/'installed-experience/RESULT.json';d=json.loads(p.read_text());d[field]=False if field!='checkout_sha256' else 'different';p.write_text(json.dumps(d))
+    repo,e=ui_gate;p=e/'installed-experience/RESULT.json';d=json.loads(p.read_text(encoding='utf-8'));d[field]=False if field!='checkout_sha256' else 'different';p.write_text(json.dumps(d), encoding='utf-8')
     with pytest.raises(ValueError):M.evidence_gate(repo,e)
 
 

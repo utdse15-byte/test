@@ -30,6 +30,24 @@ version: 1
 # ---------------------------------------------------------------------------
 schemas:
 
+  - id: manju.story-return/v1
+    kind: schema
+    owner: manju.authoring.story_return:SCHEMA
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Portable validated story base/candidate. No media, author approval or shared-file synchronization.
+
+  - id: manju.story-return-preview/v1
+    kind: schema
+    owner: manju.authoring.story_return:PREVIEW
+    status: experimental
+    latest_version: 1
+    read_older: false
+    write_older: false
+    notes: Three-way current snapshot plus explicit selectable fields. Structural edits form one conservative group; not semantic validation.
+
   - id: manju.ide-workspace/v1
     kind: schema
     owner: manju.authoring.ide:SCHEMA

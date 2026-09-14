@@ -28,7 +28,7 @@ def test_default_is_focused_and_original_controls_remain(page):
     expect(page.locator('#studio-home')).to_be_visible()
     expect(page.locator('#prompt')).not_to_be_visible()
     assert page.evaluate('ManjuExperience.state()')=={'view':'home','all':False,'large':False}
-    original=json.loads((REPO/'tests/fixtures/experience_legacy_controls.json').read_text())
+    original=json.loads((REPO/'tests/fixtures/experience_legacy_controls.json').read_text(encoding='utf-8'))
     actual=page.evaluate("() => [...document.querySelectorAll('input[id],textarea[id],select[id],button[id]')].map(e=>[e.id,e.tagName.toLowerCase()])")
     assert all(actual.count(entry)==1 for entry in original)
     assert page.locator('#quality-only').is_checked()

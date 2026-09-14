@@ -1,0 +1,15 @@
+<details id="story-return-section" class="return-shell">
+ <summary>接回 AI 改稿 · 保留我刚写的内容</summary>
+ <p class="hint return-intro">打开带导出原稿的 STORY_RETURN.json。先对照，再只接回你勾选的修改；不替换整个现场。</p>
+ <details id="story-return-files" open><summary>改稿文件与重新比较</summary><div class="actions"><label class="filebtn" for="story-return-file">打开故事改稿<input id="story-return-file" class="hidden" type="file" accept=".json,application/json"></label><button id="story-return-preview" disabled>用当前稿重新比较</button><button id="story-return-download" disabled>另存待处理改稿</button></div><p class="hint">待处理改稿不自动加入收工包，请保留原 JSON。</p></details>
+ <p id="story-return-status" role="status" class="hint">先保存当前收工包，再交给 AI。尚未接回的 JSON 单独保留，不自动加入收工包。</p>
+ <div id="story-return-results" hidden>
+  <p id="story-return-summary" class="return-summary"></p>
+  <div class="actions"><button id="story-return-select">选中未冲突文字</button><button id="story-return-clear">清空选择</button></div>
+  <div id="story-return-rows"></div>
+  <div id="story-return-paging" class="actions" hidden><button id="story-return-prev">上一页</button><span id="story-return-page-label"></span><button id="story-return-next">下一页</button></div>
+  <div class="return-footer"><button id="story-return-apply" class="primary" disabled>接回所选修改</button><button id="story-return-dismiss">收起，暂不接回</button></div>
+  <p class="hint">冲突保留本地，不提供强行覆盖。新增、删除、引用、场序和历史新增是一个默认不选的结构组，必须整体校验。技术通过不是剧情判断。</p>
+ </div>
+ <div class="actions"><button id="story-return-undo" disabled>撤回上一次接回</button></div>
+</details>

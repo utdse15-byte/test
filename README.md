@@ -1,6 +1,8 @@
-## 当前用户入口：Manju R16 · 0.2.0+r16.8
+> 本轮恢复基线是用户重新上传的 r16.10。选择性故事接回已重新实现；完整用法见 [本轮入口](REPORTS/final_selective/README.md)。先读最新 STATE 与 AGENTS，不使用上一轮未保留的下载链接。
 
-先读 [中文使用说明](tools/delivery/QUICKSTART_ZH.md)。本轮故事工作本与版本复核接入原镜头工作区，改动范围与边界见 [本轮报告](REPORTS/story/PROJECT_REVIEW.md)。有故事时请保存收工包，旧内层Studio/v1不包含故事。模型质量偏好和全部已有工作区保留。
+## 当前用户入口
+
+**本轮冻结候选：0.2.0+r16.11。** 从 [AGENTS.md](AGENTS.md)、最新 STATE 与 [本轮使用说明](REPORTS/final_selective/README.md) 开始。本地AI返回故事可逐字段接回，不覆盖网页后来新稿；完整安装说明见 [中文快速入口](tools/delivery/QUICKSTART_ZH.md)。版本、原格式保真与最终文件审计分别核验。
 
 # Manju One
 
@@ -8,9 +10,11 @@
 > Windows 11 x64 是第一平台(硬门禁 `windows-ci.yml`),详见 `CLAUDE.md` 与
 > DECISIONS #36-#38。
 
-**当前累计候选：R13。** 首次使用请先看[中文使用入口](tools/delivery/QUICKSTART_ZH.md)。离线个人创作台可以把镜头与审片、返工、导演三个区一起保存总备份；原影片工程仍单独备份。恢复与当前状态见 `STATE.md`。
+原影片工程目录与外部剪辑工程仍需单独备份。新版有故事时保存完整收工包，旧内层 Studio 不含故事。历史报告不是当前完成情况，恢复和风险见 `STATE.md`。
 
 ## 目录
+
+- [当前用户入口](#当前用户入口)
 
 - [中文速览(店主日常)](#中文速览店主日常)
 - [Four goals, one model](#four-goals-one-model)

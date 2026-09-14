@@ -476,6 +476,14 @@
       "workspace"
     ]
   },
+  "models ide-story-return": {
+    "exists": true,
+    "params": [
+      "expected_preview",
+      "output",
+      "workspace"
+    ]
+  },
   "models inspect-return": {
     "exists": true,
     "params": [
@@ -539,6 +547,23 @@
     "exists": true,
     "params": [
       "archive"
+    ]
+  },
+  "models story-return-apply": {
+    "exists": true,
+    "params": [
+      "current",
+      "expected_preview",
+      "output",
+      "returned",
+      "take"
+    ]
+  },
+  "models story-return-preview": {
+    "exists": true,
+    "params": [
+      "current",
+      "returned"
     ]
   },
   "models studio-compose": {

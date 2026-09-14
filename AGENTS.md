@@ -22,6 +22,8 @@
 
 离线台：先 `ide-open` → 改 `STORY.json` 与 `EDIT.json` 的允许内容 → `ide-preview` → 用刚取得的预览哈希 `ide-return` 创建**新候选包**。返回包不自动合并后来在浏览器写的新稿，用户明确预览、确认恢复。原包和原媒体保留。
 
+已有故事优先考虑 `ide-story-return`，网页可三方比较并只接回明确字段。不要为了过门改写基线、旧简报或观察；结构整组确认，未选内容与原媒体保持。返回不含EDIT，其他文字仍走原三方回程；未决JSON单独保存。
+
 主影片：先读 `skills/manju/SKILL.md` 和当前 `project.yaml` 的 `mode/ask_before`。用现有 JSON CLI、文本源与提案完成操作，不绕 GUI/CLI 后面的核心检查。改前重读目标，改后 `manju check` 和看差异。实际观测、批准、执行、交付分别报告。
 
 ## 不能替用户越过的边界

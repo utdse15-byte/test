@@ -423,3 +423,20 @@ def sha256_stream(stream) -> str:
     for chunk in iter(lambda:stream.read(1024*1024),b''):
         h.update(chunk)
     return h.hexdigest()
+
+
+def assert_settable_story(story: Story) -> None:
+    """Reject browser-sanitized scalar fields before publishing a restore candidate."""
+    singles = [story.title]
+    singles += [x.name for x in story.sources] + [x.provenance for x in story.sources]
+    singles += [x.title for x in story.scenes] + [x.episode for x in story.scenes]
+    if any('\n' in x or '\r' in x for x in singles):
+        raise AuthoringError('single-line story fields cannot preserve line breaks')
+    def check(value):
+        if isinstance(value, str) and '\r' in value:
+            raise AuthoringError('story text must use LF line endings')
+        if isinstance(value, dict):
+            for item in value.values(): check(item)
+        elif isinstance(value, list):
+            for item in value: check(item)
+    check(story.model_dump(mode='json'))

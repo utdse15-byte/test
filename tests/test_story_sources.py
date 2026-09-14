@@ -148,7 +148,7 @@ def test_cli_readonly_and_no_overwrite(tmp_path):
     assert json.loads(result.output)['briefs'][0]['status']=='current'
     output=tmp_path/'brief.json';assert r.invoke(app,['story-brief',str(p),'S10','--output',str(output)]).exit_code==0
     assert r.invoke(app,['story-brief',str(p),'S10','--output',str(output)]).exit_code!=0
-    assert p.read_bytes()==before and json.loads(output.read_text())==compile_brief(d,'S10')
+    assert p.read_bytes()==before and json.loads(output.read_text(encoding='utf-8'))==compile_brief(d,'S10')
 
 
 @pytest.mark.parametrize('raw',[b'{"title":"a","title":"b"}',b'{"n":NaN}',b'[]',b'\xff'])

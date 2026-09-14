@@ -1,5 +1,5 @@
-# Manju R16 · 当前接管入口
+# Manju R16 · 当前交接 r16.11
 
-先读 AGENTS.md、PROJECT_STATE_2026-09-13_17-53-56.md 与 docs/ai/OPERATIONS.md。
+先读AGENTS.md、PROJECT_STATE_2026-09-14_10-44-29.md和docs/ai/OPERATIONS.md。当前版本从真实r16.10重建；新增有基线的选择性故事接回，冲突保留本地、结构整组、旧素材/历史/协议不迁移。
 
-维护候选0.2.0+r16.10：从当前/返回故事和IDE基线/候选派生可读差异。新HTML报告不接受、不合并、不改作品；原协议与质量档保持。具体测过什么见REPORTS/story_changes/VALIDATION.md及实际发布证据。
+最终下载前缀MANJU_FINAL_R16_11。不要回给用户上一轮缺失链接；文件必须实际存在并核验。未接受JSON另存，已接回故事使用原收工包；不会自动同步另一网页或主影片目录。

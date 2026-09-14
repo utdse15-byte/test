@@ -4643,3 +4643,10 @@ Local AI works on saved immutable checkout baselines and editable story/text cop
 Read-only comparisons are derived from two validated Story/v1 snapshots and do not require a proposal or transaction schema. Stable IDs match entities; actual list positions describe order, not identity or authorship. Report literal before/after fields and unchanged fields without claiming semantic validation. Added scenes can shift positions without rewriting existing prose.
 
 IDE reports compare exported baseline versus disk candidate; browser restore/import compares current browser state versus pending file. These are different comparisons and must be labelled explicitly. Continued editing invalidates the preview; restore remains a whole-snapshot action. No selective acceptance, automatic merge or new approval route is introduced. An information toast must not cover a comparison already visible in its preview. A standalone --html report is script-free, read-only and exclusive-new, and is not a build input. Existing portable schemas, media bytes, quality policy and immutable history remain unchanged.
+
+
+## RESTORED-SELECTIVE-RETURN · 2026-09-14
+
+Rebuild from the user's actual r16.10 archive, not the vanished prior candidate. Use a separate base/candidate story-return envelope and a snapshot-bound preview. Stable-ID whole-field selections keep concurrent local text; structural edits are one conservative group with delete-content checks. Validate the complete merged document before one install or exclusive new-file publication. Old briefs, observations, history order and linkage cannot be rewritten by the candidate. No saved-work schema migration.
+
+Pending packet remains a separate author-private file, not a silently new backup field. Accepted content uses existing Desk/v2, original media and history remain. Async stale reads cannot replace a newer preview; after application intentionally unselected rows stay unselected. One guarded undo is not history storage. No shared-file CAS, semantic certainty, paid execution or perpetual download guarantee. Release requires actual independent install and downloadable-artifact audit.

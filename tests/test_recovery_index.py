@@ -22,7 +22,7 @@ def test_summary_reads_rich_point_without_changes_or_extracting(tmp_path, archiv
     assert d['pending_external_edit'] and d['pending_template']
     assert not d['video_decode_verified'] and not d['restored'] and not d['independent_backup']
     assert contents(store.root)==before and verify_desk(archive)['ok']
-    assert set(json.loads((store.root/point['id']/'POINT.json').read_text()))=={'id','window','sequence','sha256','bytes','created_utc'}
+    assert set(json.loads((store.root/point['id']/'POINT.json').read_text(encoding='utf-8')))=={'id','window','sequence','sha256','bytes','created_utc'}
 
 
 def test_empty_unfinished_draft_can_be_summarized(tmp_path):

@@ -55,7 +55,7 @@ def test_common_inventory_and_launchers(tmp_path):
     runtime = (ROOT/'src/manju/authoring/data/workbench.html').read_bytes()
     assert (root/'APP/OPEN_MODEL_WORKBENCH.html').read_bytes() == runtime
     for file in ['LOCAL_WORKBENCH_FILES.json', 'CONTINUE_FILES.json']:
-        for rel, expected in json.loads((root/file).read_text()).items():
+        for rel, expected in json.loads((root/file).read_text(encoding='utf-8')).items():
             assert build.sha(root/rel) == expected
     receipt = build.inventory(root, '0.2.0+r16.2', 'fixture-not-a-release')
     assert receipt['ok']

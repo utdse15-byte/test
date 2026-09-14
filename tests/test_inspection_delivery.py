@@ -34,7 +34,7 @@ def test_inspection_gate_accepts_matching_complete_evidence(evidence):
  ('unchanged_media_files',0),('actual_original_resolution',[640,360]),('javascript_errors',['boom']),
  ('network_requests',['https://example.invalid'])])
 def test_inspection_gate_rejects_incomplete_or_divergent_evidence(evidence,key,value):
-    repo,ev=evidence;p=ev/'installed-inspection/RESULT.json';r=json.loads(p.read_text());r[key]=value;p.write_text(json.dumps(r))
+    repo,ev=evidence;p=ev/'installed-inspection/RESULT.json';r=json.loads(p.read_text(encoding='utf-8'));r[key]=value;p.write_text(json.dumps(r), encoding='utf-8')
     with pytest.raises(ValueError):M.gate(repo,ev)
 
 

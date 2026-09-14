@@ -94,3 +94,17 @@ manju 的生成provider、外部网页操作与商用额度并非全部已接通
 - https://cursor.com/docs/rules
 
 入口文件是上下文和工作约定，不是权限系统。需由用户自己的 IDE 读文件、运行命令并回报结果；不会替它配置忽略确认、读取密钥或自动执行付费服务。
+
+## r16.11：推荐的选择性故事接回
+
+用户重传r16.10后本轮重建，不从前次丢失包继承代码。已有故事时，ide-preview之后运行：
+
+```text
+python -m manju models ide-story-return AI_WORK --expected-preview HASH --output STORY_RETURN.json
+```
+
+网页首页打开这份JSON，默认只勾选未冲突文字；本地新对白保留，结构整组人工选择。它包含基线和候选完整作者资料，不含媒体或EDIT文字；excluded_edit_fields列出没有包含的镜头/返工/导演修改。旧EDIT三方回程与ide-return整包路径不变，不能混称同时接回。
+
+继续写会使预览失效，必须重新比较。应用先验证全部结果，冲突或容量失败不半应用；旧简报/观察/故事身份/link不可在候选中重写。当前本地历史在文字接回中保留。一次撤回仅在未继续编辑时有效，不恢复批准。未接受JSON单独保存，不在收工包里；已应用故事随原Desk/v2保存。
+
+CLI可用story-return-preview CURRENT.json STORY_RETURN.json，再按明确--take与最新--expected-preview运行story-return-apply，--output必须是新故事文件。不是共享文件事务或网页未保存内容实时同步。没有基线的新故事继续走原导入。

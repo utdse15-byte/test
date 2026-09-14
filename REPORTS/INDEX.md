@@ -135,3 +135,6 @@ reporting window stays visible; the era table keeps their record intact.
 
 | story_changes/PROJECT_REVIEW.md | r16.10：稳定ID故事对照、当前页面恢复预览、IDE只读HTML | 没有选择性接受或自动合并 |
 | story_changes/VALIDATION.md | 1084点同进程回归、真实素材/安装/旧版回程 | 下载与最终包另行核验，非全项目与Windows认证 |
+
+| final_selective/PROJECT_REVIEW.md | r16.10可靠基线重建选择性接回、旧协议保真 | 本轮冻结交付，下载另审计 |
+| final_selective/VALIDATION.md | 终态选定测试、实媒体与安装一致性 | 不代替全平台认证 |

@@ -426,3 +426,28 @@ def ide_return_command(workspace: Path, output: Path = typer.Option(..., '--outp
     """明确以刚才预览创建新收工候选包；不自动恢复，不覆盖原包或后来浏览器稿。"""
     from .ide import return_workspace
     _ide_call(return_workspace, workspace, output, expected_preview=expected_preview)
+
+
+@app.command('ide-story-return')
+def ide_story_return_command(workspace: Path, output: Path = typer.Option(..., '--output'),
+                             expected_preview: str = typer.Option(..., '--expected-preview')):
+    """导出带原稿的故事修改JSON，逐项接回，不含镜头EDIT或媒体。"""
+    from .ide import export_story_return
+    _ide_call(export_story_return, workspace, output, expected_preview=expected_preview)
+
+
+@app.command('story-return-preview')
+def story_return_preview_command(current: Path, returned: Path):
+    """只读三方比较当前故事、导出原稿和返回新稿。"""
+    from .story_return import preview_files
+    _ide_call(preview_files, current, returned)
+
+
+@app.command('story-return-apply')
+def story_return_apply_command(current: Path, returned: Path,
+                               output: Path = typer.Option(..., '--output'),
+                               take: list[str] = typer.Option(..., '--take'),
+                               expected_preview: str = typer.Option(..., '--expected-preview')):
+    """仅按有效预览的明确选择创建新故事；冲突拒绝，原件不覆盖。"""
+    from .story_return import apply_files
+    _ide_call(apply_files, current, returned, output, take, expected_preview=expected_preview)

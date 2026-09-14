@@ -1,6 +1,6 @@
 {
   "stage": "R16",
-  "version": "0.2.0+r16.10",
+  "version": "0.2.0+r16.11",
   "baseline": "13a2ab12dac109bece5a2be63254024c11ebc390",
   "inherits": [
     "R2",
@@ -121,7 +121,8 @@
       "分区工作台、常驻保存与真实备份状态、快捷查找和大字阅读；完整长页兼容视图，切换不改草稿素材或审批",
       "可选故事工作本：作品形态、稳定编号场序、显式知情、引用版本与人工复盘，Desk/v2收工保存，Studio/v1不变",
       "通用AI接管入口、只读冷启动检查、故事/文字/原素材IDE往返；独立故事导航与分步写作，保留原协议和批准边界",
-      "故事按稳定编号给出只读原文/新版/未改字段/位置变化，IDE可导出无脚本HTML对照；导入预览就地展示，不自动接受或合并"
+      "故事按稳定编号给出只读原文/新版/未改字段/位置变化，IDE可导出无脚本HTML对照；导入预览就地展示，不自动接受或合并",
+      "从用户重传r16.10重建选择性故事接回：三方旧值比较、冲突不覆盖、结构整组校验、受保护撤回、原收工与媒体兼容；以前遗失的包不计作已恢复代码"
     ]
   },
   "original_r3_r4_bytes_recovered": false,
@@ -129,7 +130,7 @@
   "formal_windows_release": false,
   "commercial_api_executed": false,
   "prior_verified_stage": "R16",
-  "prior_archive_sha256": "a14b1ee2abc954325f3f9ee0abf5a886a612f80665dd37e37f87980080f51e95",
-  "maintenance_revision": "readable-story-differences",
-  "prior_verified_version": "0.2.0+r16.9"
+  "prior_archive_sha256": "8f9d638f0ff5c4cb1d18ee440bd651d4a8f2d3d7c53d1fd8fd2bf682bbbd3b95",
+  "maintenance_revision": "restored-selective-return-final",
+  "prior_verified_version": "0.2.0+r16.10"
 }

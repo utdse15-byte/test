@@ -124,9 +124,11 @@ async function identifyIntake(files){
   if(name==='EDIT.json'&&doc.schema_id==='manju.external-edit/v1')throw new Error('这是外部编辑材料 ZIP，不是工作备份。请解压，修改后打开其中 EDIT.json 和配套 TXT；媒体按实际用途另行添加。');
   throw new Error('此 ZIP 不是已支持的可恢复材料；交接包和任意剪辑工程不会被假装还原。');
  }
- require(file.size<=2*1024*1024,'未知文件不作为 JSON 读取；JSON 最大 2 MiB');
+ require(file.size<=STORY_RETURN_LIMIT,'未知文件不作为 JSON 读取；文件超过上限');
  const doc=strictJSON(new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()));require(doc&&typeof doc==='object'&&!Array.isArray(doc),'材料必须是带版本标记的对象');
+ require(doc.schema_id===STORY_RETURN_SCHEMA||file.size<=2*1024*1024,'此类 JSON 最大 2 MiB');
  const routes={
+  'manju.story-return/v1':['story-return','带原稿的故事修改：三方比较，只接回所选，不替换整个现场。',intakeRoute('比较故事改稿，保留本地新稿','story-return-file','story-return-section')],
   'manju.story-notebook/v1':['story','故事工作本：包含作者计划、人物依据、场景和旧简报。不含原素材，也不自动改写当前镜头。',intakeRoute('预览故事工作本','story-file','story-section')],
   'manju.retouch-task/v1':['retouch','静帧精修任务；选回原 TASK.json 后核验，再选择实际返回 PNG。不是完整备份。',intakeRoute('载入静帧精修任务','retouch-task','retouch-section')],
   'manju.model-request/v1':['request','镜头任务，不含媒体。导入会替换上方任务，原工程不变。',intakeRoute('导入镜头任务','import-request','workspace-section',true)],
